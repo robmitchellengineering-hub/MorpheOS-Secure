@@ -22,7 +22,8 @@ use core::panic::PanicInfo;
 
 extern crate alloc;
 
-mod alloc as heap;
+#[path = "alloc.rs"]
+mod heap;
 mod cap;
 mod ledger;
 mod uart;
