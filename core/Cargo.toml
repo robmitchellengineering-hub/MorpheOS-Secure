@@ -32,3 +32,5 @@ task-mutant-no-switch = []
 task-mutant-share-tables = []
 # The mutation for M5a: a clock that never advances, so a deadline check that passes is reading a constant.
 tick-mutant-frozen = []
+# M5b's mutation: arm the timer so far out that it cannot fire inside the test.
+tick-mutant-armed-far = []
