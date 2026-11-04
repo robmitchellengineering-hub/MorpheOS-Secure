@@ -96,7 +96,10 @@ impl FirstFit {
         while !cursor.is_null() {
             // SAFETY: every node in this list was written by `init` or by this function, and is inside the arena.
             let node = unsafe { &mut *cursor };
-            if node.magic == FREE && node.size >= want + HEADER {
+            // A free block already owns its header, so a block of exactly `want` satisfies the request. Requiring
+            // `want + HEADER` here refused to reuse an exactly-sized hole - measured: the freed 32-byte cue list was
+            // skipped by the next 32-byte allocation.
+            if node.magic == FREE && node.size >= want {
                 let remainder = node.size - want - HEADER;
                 if remainder >= HEADER + 16 {
                     // Split: the tail becomes a new free block.

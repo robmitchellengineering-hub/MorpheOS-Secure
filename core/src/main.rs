@@ -150,7 +150,14 @@ pub extern "C" fn kmain() -> ! {
         unsafe { alloc::alloc::dealloc(p, layout) };
         // SAFETY: this is THE double free — the attack the falsifier runs.
         unsafe { alloc::alloc::dealloc(p, layout) };
-        let (_, _, refused) = ALLOCATOR.stats();
+        let (used, frees, refused) = ALLOCATOR.stats();
+        uart.write_str("M2b: stats used=");
+        uart.write_hex(used as u64);
+        uart.write_str(" frees=");
+        uart.write_hex(frees as u64);
+        uart.write_str(" refused=");
+        uart.write_hex(refused as u64);
+        uart.write_line("");
         if refused >= 1 {
             uart.write_line("M2b: DOUBLE FREE REFUSED — the block was not inserted twice");
         } else {
