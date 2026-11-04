@@ -197,9 +197,6 @@ irq_entry:
     RESTORE_ALL
     eret
 
-    .endm
-
-    .section .text.entry, "ax"
     "#
 );
 
