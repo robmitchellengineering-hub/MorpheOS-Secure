@@ -320,29 +320,6 @@ fn task_a_entry(uart: &Uart) -> ! {
     }
 }
 
-/// The second task's entry: it prints once and halts, which is enough to prove it was ever run.
-#[unsafe(no_mangle)]
-pub extern "C" fn task_second_entry() {
-    let uart = Uart::at(UART_QEMU_VIRT);
-    let mut spins: u64 = 0;
-    // Count first, so "it ran" is arithmetic and not a claim: the CPU had to be here for this loop to execute.
-    while spins < 5_000 {
-        spins += 1;
-        core::hint::spin_loop();
-    }
-    {
-        let mut line = uart::LineBuf::new();
-        line.push_str("TASK B: ran ");
-        line.push_u64(spins);
-        line.push_str(" iterations on its own stack — the switch reached it");
-        line.flush(&uart);
-    }
-    loop {
-        // SAFETY: a task with nothing to do waits.
-        unsafe { core::arch::asm!("wfe", options(nomem, nostack)) };
-    }
-}
-
 /// The Core's first instruction in Rust.
 #[unsafe(no_mangle)]
 pub extern "C" fn kmain() -> ! {
