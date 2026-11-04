@@ -38,20 +38,98 @@ global_asm!(
     r#"
     .intel_syntax noprefix
 
+    /* ---- the multiboot header. The loader searches for this magic in the first 8 KiB and nothing else ---- */
     .section .multiboot, "a"
     .align 4
-    .long 0x1BADB002          /* magic the loader searches for */
-    .long 0x00000000          /* flags: nothing requested, not even memory info */
-    .long -(0x1BADB002 + 0)   /* checksum */
+    .long 0x1BADB002
+    .long 0x00000000
+    .long -(0x1BADB002 + 0)
 
     .section .text
+    .code32
     .global _start
 _start:
-    /* A loader guarantees nothing about the stack; give ourselves ours from the linker script before any Rust. */
+    cli
+
+    /* OUR GDT, not the loader's: a 64-bit code segment and a flat data segment. The loader's GDT is not ours to
+     * rely on, and after the far jump below nothing of the loader's is left in the path. */
+    lgdt [gdt64_ptr]
+
+    /* Identity-map the first 1 GiB with 2 MiB pages: pml4[0] -> pdpt[0] -> pd[0..512]. Nothing above 1 GiB exists
+     * on rung M0b, and a Core that maps memory it has not asked for is a Core that lies about what it owns. */
+    mov edi, offset pd
+    mov eax, 0x83                 /* present | writable | 2 MiB page */
+    mov ecx, 512
+1:  mov [edi], eax
+    add eax, 0x200000
+    add edi, 8
+    loop 1b
+
+    mov dword ptr [pdpt], offset pd
+    or  dword ptr [pdpt], 3
+    mov dword ptr [pdpt + 4], 0
+
+    mov dword ptr [pml4], offset pdpt
+    or  dword ptr [pml4], 3
+    mov dword ptr [pml4 + 4], 0
+
+    /* PAE, then the long-mode enable bit, then paging — the order the CPU requires. */
+    mov eax, cr4
+    or  eax, 0x20                 /* CR4.PAE */
+    mov cr4, eax
+
+    mov eax, offset pml4
+    mov cr3, eax
+
+    mov ecx, 0xC0000080           /* EFER */
+    rdmsr
+    or  eax, 0x100                /* EFER.LME */
+    wrmsr
+
+    mov eax, cr0
+    or  eax, 0x80000000           /* CR0.PG */
+    mov cr0, eax
+
+    /* A far jump with the 64-bit selector: the only way into 32/64 mode, encoded by hand because the assembler's
+     * mnemonic for it differs between syntaxes and this must not be a guess. */
+    .byte 0xEA
+    .long long_mode
+    .word 0x08
+
+    .code64
+long_mode:
+    mov ax, 0x10
+    mov ds, ax
+    mov es, ax
+    mov fs, ax
+    mov gs, ax
+    mov ss, ax
+
+    /* The stack the linker script gave us. After this point everything is Rust, and the loader's only remaining
+     * role is that it read the file. */
     lea rsp, [rip + stack_top]
     call kmain
-1:  hlt
-    jmp 1b
+
+2:  hlt
+    jmp 2b
+
+    /* The page tables the stub builds. Zeroed by the loader because they are part of the image's memory size. */
+    .section .bss
+    .align 4096
+pml4:  .skip 4096
+pdpt:  .skip 4096
+pd:    .skip 4096
+
+    .section .data
+    .align 8
+gdt64:
+    .quad 0
+    .quad 0x00AF9A000000FFFF      /* 64-bit code, present, DPL0, readable */
+    .quad 0x00CF92000000FFFF      /* flat data, present, writable */
+gdt_end:
+gdt64_ptr:
+    .word gdt_end - gdt64 - 1
+    .long gdt64
 "#
 );
 
