@@ -20,3 +20,5 @@ m1-mutant-grant = []
 # `m2-mutant-skip-verify` disables verification (the mutation that must make the check go red).
 m2-test-tamper = []
 m2-mutant-skip-verify = []
+# The mutation for M2b's falsifier: accept a double free (the classic way a free list aliases memory).
+m2b-mutant-allow-double-free = []

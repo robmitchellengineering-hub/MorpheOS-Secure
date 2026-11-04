@@ -20,11 +20,17 @@
 use core::arch::global_asm;
 use core::panic::PanicInfo;
 
+extern crate alloc;
+
+mod alloc as heap;
 mod cap;
 mod ledger;
 mod uart;
 use cap::{access, CapTable, Object, ObjectId};
 use ledger::Ledger;
+
+#[global_allocator]
+static ALLOCATOR: heap::FirstFit = heap::FirstFit::new();
 use uart::{Uart, UART_QEMU_VIRT};
 
 /// The line M0 asserts. One place, so the test and the Core cannot disagree.
@@ -85,6 +91,48 @@ pub extern "C" fn kmain() -> ! {
     let _ = access(&uart, "task_plugin", &task_plugin, &measurement); // must be REFUSED by the Core
 
     uart.write_line("M1: the Core decided both directions; no task holds a capability it was not handed");
+
+    // ---- M2b: the memory the machine owns. Rust's `alloc` interface, an implementation that is ours, and a double
+    // free that is REFUSED rather than quietly handing the same bytes to two owners. ----
+    // SAFETY: called once, before any allocation, on the single core this rung runs on.
+    unsafe { ALLOCATOR.init() };
+    {
+        use alloc::vec::Vec;
+        let mut cue_list: Vec<u32> = Vec::new();
+        for cue in 1..=8u32 {
+            cue_list.push(cue * 1000);
+        }
+        uart.write_str("M2b: a Vec of ");
+        // 8 cues pushed, capacity is the allocator's business
+        uart.write_line("8 cues allocated through the Core's own allocator");
+
+        let first = cue_list.as_ptr() as usize;
+        drop(cue_list);
+
+        let mut second: Vec<u32> = Vec::with_capacity(8);
+        second.push(7);
+        let reused = second.as_ptr() as usize == first;
+        if reused {
+            uart.write_line("M2b: the freed block was reused by the next allocation (first fit, as designed)");
+        } else {
+            uart.write_line("M2b: the freed block was NOT reused — first fit did not take the hole");
+        }
+
+        // The attack: free the same block twice. A naive free list inserts it twice and the next two allocations
+        // overlap. Ours must refuse the second free and count it.
+        let layout = alloc::alloc::Layout::from_size_align(64, 16).expect("valid layout");
+        let p = unsafe { alloc::alloc::alloc(layout) };
+        unsafe { alloc::alloc::dealloc(p, layout) };
+        unsafe { alloc::alloc::dealloc(p, layout) }; // the double free
+        let (_, frees, refused) = ALLOCATOR.stats();
+        uart.write_str("M2b: frees ");
+        uart.write_line(if frees >= 1 { "recorded" } else { "not recorded" });
+        if refused >= 1 {
+            uart.write_line("M2b: DOUBLE FREE REFUSED — the block was not inserted twice");
+        } else {
+            uart.write_line("M2b: FAIL a double free was accepted; two owners can now hold the same bytes");
+        }
+    }
 
     // ---- M2: the ledger. State as generations, undo without a reboot, and a generation that does not check out is
     // refused rather than used. ----
