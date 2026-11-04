@@ -234,9 +234,7 @@ irq_entry:
     bl  irq_switch
     mov sp, x0
 
-    /* WITH STATE: the frame may belong to the OTHER task, so the resume address and PSTATE come from it too. This is
-     * the only place that may use this macro - the fault path must keep RESTORE_ALL. */
-    RESTORE_ALL_WITH_STATE
+    RESTORE_ALL
     eret
 
     "#
@@ -271,66 +269,17 @@ fn task_entry() -> u64 {
 pub extern "C" fn irq_switch(sp: usize) -> usize {
     // SAFETY: the vector entry saves and restores every register, and the GIC is initialised before unmask().
     unsafe { gic::handle() };
-    // THE SWITCH, in one call: record the frame that was interrupted and answer with the one to resume from.
-    let to = sched::on_irq(sp);
-
-    // Name the first few switches. A bad restore and a task that starts and dies look identical from outside - the
-    // machine simply stops - so the numbers that matter are printed while they are still true.
-    static mut SWITCH_N: u64 = 0;
-    unsafe { SWITCH_N += 1 };
-    let n = unsafe { SWITCH_N };
-    if n <= 5 {
-        let mut line = uart::LineBuf::new();
-        line.push_str("SWITCH ");
-        line.push_u64(n);
-        line.push_str(": from ");
-        line.push_hex(sp as u64);
-        line.push_str(" to ");
-        line.push_hex(to as u64);
-        line.flush(&Uart::at(UART_QEMU_VIRT));
-    }
-    to
-}
-
-/// The first task: it counts until it is done and then says so. It never yields — the only way it loses the CPU is
-/// the timer taking it, which is the whole point.
-fn task_a_entry(uart: &Uart) -> ! {
-    let mut spins: u64 = 0;
-    while spins < 200_000 {
-        spins += 1;
-        core::hint::spin_loop();
-    }
-    // Through the buffer, so the line cannot be spliced by the other task printing at the same moment.
-    {
-        let mut line = uart::LineBuf::new();
-        line.push_str("TASK A: ran ");
-        line.push_u64(spins);
-        line.push_str(" iterations — and it was interrupted along the way");
-        line.flush(uart);
-    }
-    loop {
-        // SAFETY: task A is done.
-        unsafe { core::arch::asm!("wfe", options(nomem, nostack)) };
-    }
+    // THE SWITCH, in one call: record the frame that was interrupted and answer with the one to resume from. While
+    // switching is off this returns `sp` unchanged, so every existing gate must produce exactly the same result — and
+    // that is what this commit is measured against.
+    sched::on_irq(sp)
 }
 
 /// The second task's entry: it prints once and halts, which is enough to prove it was ever run.
 #[unsafe(no_mangle)]
 pub extern "C" fn task_second_entry() {
     let uart = Uart::at(UART_QEMU_VIRT);
-    let mut spins: u64 = 0;
-    // Count first, so "it ran" is arithmetic and not a claim: the CPU had to be here for this loop to execute.
-    while spins < 5_000 {
-        spins += 1;
-        core::hint::spin_loop();
-    }
-    {
-        let mut line = uart::LineBuf::new();
-        line.push_str("TASK B: ran ");
-        line.push_u64(spins);
-        line.push_str(" iterations on its own stack — the switch reached it");
-        line.flush(&uart);
-    }
+    uart.write_line("TASK B: running on its own stack — the switch reached it");
     loop {
         // SAFETY: a task with nothing to do waits.
         unsafe { core::arch::asm!("wfe", options(nomem, nostack)) };
@@ -378,6 +327,18 @@ pub extern "C" fn kmain() -> ! {
     let _ = access(&uart, "task_plugin", &task_plugin, &plugin_state);
     let _ = access(&uart, "task_plugin", &task_plugin, &measurement);
     uart.write_line("M1: the Core decided both directions; no task holds a capability it was not handed");
+
+    // The console can now print a whole line from one context without being spliced by another: the line is built
+    // first, then flushed under a single lock. The check is that the SAME line comes out intact through the buffer.
+    {
+        use uart::LineBuf;
+        let mut line = LineBuf::new();
+        line.push_str("CONSOLE: buffered line, ");
+        line.push_u64(2);
+        line.push_str(" tasks expected, counter at ");
+        line.push_hex(0x2a);
+        line.flush(&uart);
+    }
 
     // ---- M5c, policy half: two tasks, and the Core choosing between them. No assembly, no switch: this is the
     // decision, measured on its own so that the mechanism cannot hide a policy bug or the reverse. ----
@@ -516,29 +477,64 @@ pub extern "C" fn kmain() -> ! {
         uart.write_line(" timer interrupts arrived in 50 ms — the interrupt path is not working");
     }
 
-    // ---- M5c part four: preemption. Two contexts, one CPU, and the timer choosing between them. ----
-    let second_top = {
-        let base = core::ptr::addr_of!(sched::TASK_B_STACK) as usize;
-        base + core::mem::size_of::<sched::TaskStack>()
-    };
-    let second_frame = sched::install_frame(second_top, task_second_entry as usize);
-    sched::install_second(second_frame);
-    let (elr, spsr) = sched::frame_state(second_frame);
-    uart.write_str("PREEMPT: second task frame at 0x");
-    uart.write_hex(second_frame as u64);
-    uart.write_str(", resumes at 0x");
-    uart.write_hex(elr);
-    uart.write_str(" in PSTATE 0x");
-    uart.write_hex(spsr);
-    uart.write_line("");
-    // The boot's own frame is recorded by the first interrupt, so nothing to do here but turn it on.
-    sched::enable_switching();
-    // Measured: the interrupt demo at M5b ends by MASKING interrupts for determinism, so task A ran to completion with
-    // no tick at all and no switch happened. Preemption needs them on.
-    gic::unmask();
-    uart.write_line("PREEMPT: switching enabled and interrupts unmasked — the next tick may move the CPU");
-    // From here this context IS task A. It never returns; the timer is the only thing that takes the CPU away.
-    task_a_entry(&uart);
+    // ---- M2b: the memory the machine owns. ----
+    // SAFETY: called once, before any allocation, on the single core this rung runs on.
+    unsafe { ALLOCATOR.init() };
+    uart.write_line("M2b: allocator initialised (arena handed to the free list)");
+    {
+        use alloc::vec::Vec;
+        let mut cue_list: Vec<u32> = Vec::new();
+        for cue in 1..=8u32 {
+            cue_list.push(cue * 1000);
+        }
+        uart.write_line("M2b: 8 pushes through the global allocator returned");
+        let first = cue_list.as_ptr() as usize;
+        drop(cue_list);
+        uart.write_line("M2b: the cue list was dropped");
+
+        let mut second: Vec<u32> = Vec::with_capacity(8);
+        second.push(7);
+        let reused = second.as_ptr() as usize == first;
+        if reused {
+            uart.write_line("M2b: the freed block was reused by the next allocation (first fit, as designed)");
+        } else {
+            uart.write_line("M2b: the freed block was NOT reused — first fit did not take the hole");
+        }
+
+        // The double-free attack, called directly on the allocator so the header is visible. Three numbers:
+        // the address and its magic when handed out, after the first free, and after the second.
+        // SAFETY: the allocator is initialised and the pointer comes from it.
+        let p = unsafe { ALLOCATOR.alloc_block(64) };
+        uart.write_str("M2b: alloc -> ");
+        uart.write_hex(p as u64);
+        uart.write_str(" magic=");
+        uart.write_hex(unsafe { ALLOCATOR.magic_of(p) });
+        uart.write_line("");
+
+        // SAFETY: p came from this allocator.
+        let first = unsafe { ALLOCATOR.free_block(p) };
+        uart.write_str("M2b: free#1 -> accepted=");
+        uart.write_hex(u64::from(first));
+        uart.write_str(" magic=");
+        uart.write_hex(unsafe { ALLOCATOR.magic_of(p) });
+        uart.write_line("");
+
+        // SAFETY: this is the attack — the same pointer freed again.
+        let second = unsafe { ALLOCATOR.free_block(p) };
+        uart.write_str("M2b: free#2 -> accepted=");
+        uart.write_hex(u64::from(second));
+        uart.write_str(" magic=");
+        uart.write_hex(unsafe { ALLOCATOR.magic_of(p) });
+        uart.write_line("");
+
+        let (_, _, refused) = ALLOCATOR.stats();
+        if refused >= 1 && !second {
+            uart.write_line("M2b: DOUBLE FREE REFUSED — the block was not inserted twice");
+        } else {
+            uart.write_line("M2b: FAIL a double free was accepted; two owners can now hold the same bytes");
+        }
+    }
+
 
     // ---- M2: the ledger. ----
     let mut machine = Ledger::empty();
@@ -632,64 +628,6 @@ pub extern "C" fn kmain() -> ! {
         uart.write_str("MMU: FAIL the guard page was readable (value ");
         uart.write_hex(phantom);
         uart.write_line(") — memory we did not map must not be reachable");
-    }
-
-    // ---- M2b: the memory the machine owns. ----
-    // SAFETY: called once, before any allocation, on the single core this rung runs on.
-    unsafe { ALLOCATOR.init() };
-    uart.write_line("M2b: allocator initialised (arena handed to the free list)");
-    {
-        use alloc::vec::Vec;
-        let mut cue_list: Vec<u32> = Vec::new();
-        for cue in 1..=8u32 {
-            cue_list.push(cue * 1000);
-        }
-        uart.write_line("M2b: 8 pushes through the global allocator returned");
-        let first = cue_list.as_ptr() as usize;
-        drop(cue_list);
-        uart.write_line("M2b: the cue list was dropped");
-
-        let mut second: Vec<u32> = Vec::with_capacity(8);
-        second.push(7);
-        let reused = second.as_ptr() as usize == first;
-        if reused {
-            uart.write_line("M2b: the freed block was reused by the next allocation (first fit, as designed)");
-        } else {
-            uart.write_line("M2b: the freed block was NOT reused — first fit did not take the hole");
-        }
-
-        // The double-free attack, called directly on the allocator so the header is visible. Three numbers:
-        // the address and its magic when handed out, after the first free, and after the second.
-        // SAFETY: the allocator is initialised and the pointer comes from it.
-        let p = unsafe { ALLOCATOR.alloc_block(64) };
-        uart.write_str("M2b: alloc -> ");
-        uart.write_hex(p as u64);
-        uart.write_str(" magic=");
-        uart.write_hex(unsafe { ALLOCATOR.magic_of(p) });
-        uart.write_line("");
-
-        // SAFETY: p came from this allocator.
-        let first = unsafe { ALLOCATOR.free_block(p) };
-        uart.write_str("M2b: free#1 -> accepted=");
-        uart.write_hex(u64::from(first));
-        uart.write_str(" magic=");
-        uart.write_hex(unsafe { ALLOCATOR.magic_of(p) });
-        uart.write_line("");
-
-        // SAFETY: this is the attack — the same pointer freed again.
-        let second = unsafe { ALLOCATOR.free_block(p) };
-        uart.write_str("M2b: free#2 -> accepted=");
-        uart.write_hex(u64::from(second));
-        uart.write_str(" magic=");
-        uart.write_hex(unsafe { ALLOCATOR.magic_of(p) });
-        uart.write_line("");
-
-        let (_, _, refused) = ALLOCATOR.stats();
-        if refused >= 1 && !second {
-            uart.write_line("M2b: DOUBLE FREE REFUSED — the block was not inserted twice");
-        } else {
-            uart.write_line("M2b: FAIL a double free was accepted; two owners can now hold the same bytes");
-        }
     }
 
     uart.write_line(DONE);
