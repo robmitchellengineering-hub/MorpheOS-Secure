@@ -200,66 +200,7 @@ irq_entry:
     .endm
 
     .section .text.entry, "ax"
-    .global _start
-_start:
-    /* The stack the linker script reserved. AArch64 requires sp to stay 16-byte aligned. */
-    adrp x0, stack_top
-    add  x0, x0, :lo12:stack_top
-    mov  sp, x0
-
-    /* Interrupts off until the GIC is ready; FP/SIMD on, because the compiler emits it for ordinary copies. */
-    msr daifset, #0xf
-
-    /* Run on SP_EL1 explicitly. The IRQ vector entry (entry 5) stacks on SP_ELx, so if the main code were running on
-     * SP_EL0 the interrupt would push to whatever SP_EL1 happens to be — zero at reset — and fault immediately. That
-     * is exactly the symptom: unmask, and the boot never prints the next line. */
-    msr spsel, #1
-
-    mrs x0, cpacr_el1
-    orr x0, x0, #(3 << 20)
-    msr cpacr_el1, x0
-    isb
-
-    /* VBAR_EL1 must be 2 KiB aligned. */
-    adrp x0, vectors
-    add  x0, x0, :lo12:vectors
-    msr vbar_el1, x0
-    isb
-
-    bl   kmain
-1:  wfe
-    b    1b
-
-    /* The vector table, in architecture order: 0-4 faults (EL1t group), 5 IRQ (EL1h), 6-15 faults.
-     * Entry 5 is the one this machine's timer arrives on, and it is written out rather than looped so it cannot be
-     * an off-by-one. */
-    .balign 2048
-vectors:
-    FAULT_ENTRY
-    FAULT_ENTRY
-    FAULT_ENTRY
-    FAULT_ENTRY
-    FAULT_ENTRY
-    .balign 128
-    b irq_entry
-    FAULT_ENTRY
-    FAULT_ENTRY
-    FAULT_ENTRY
-    FAULT_ENTRY
-    FAULT_ENTRY
-    FAULT_ENTRY
-    FAULT_ENTRY
-    FAULT_ENTRY
-    FAULT_ENTRY
-    FAULT_ENTRY
-
-    /* The interrupt path: an interrupt is not a fault. Save, handle, restore, return. */
-irq_entry:
-    SAVE_ALL
-    bl  irq_handler
-    RESTORE_ALL
-    eret
-"#
+    "#
 );
 
 /// The task's entry point. It does two things a task must be able to do: use its own stack for real work, and
