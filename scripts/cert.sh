@@ -36,6 +36,8 @@ sed -e 's/\r$//' "$LOG" | grep -E "^CERT:" | head -6
 ADMIT="CERT: fitting graph admitted — utilisation 350000 ppm"
 OVER="CERT: over budget REFUSED — the term that broke it is engine"
 LIE="CERT: lying certificate REFUSED"
+LEDGER_OK="CERT: generation 0 applied with a certificate at 350000 ppm"
+LEDGER_REFUSED="CERT: a generation was REFUSED — engine broke the budget, and the ledger's head did not move (0 -> 0)"
 BOUNDED="CERT: the check allocated nothing, so a hostile certificate cannot make it expensive"
 
 if [ "$MODE" = "--self-test" ]; then
@@ -46,7 +48,7 @@ if [ "$MODE" = "--self-test" ]; then
 fi
 grep -qF "CERT: FAIL" "$LOG" && { echo "FAIL: the Core reported its own failure" >&2; exit 1; }
 missing=""
-for line in "$ADMIT" "$OVER" "$LIE" "$BOUNDED"; do
+for line in "$ADMIT" "$OVER" "$LIE" "$LEDGER_OK" "$LEDGER_REFUSED" "$BOUNDED"; do
     grep -qF "$line" "$LOG" || missing="$missing
   - $line"
 done
