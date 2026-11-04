@@ -152,15 +152,16 @@ global_asm!(
     .section .text.entry, "ax"
     .global _start
 _start:
+    /* FIRST INSTRUCTION: the firmware's device tree pointer arrives in x0, and every instruction after this one may
+       clobber it. Measured: storing it further down left the reader looking at a valid-looking pointer that was not
+       the tree, so the magic check failed and the dump printed nothing. */
+    adrp x1, DTB_POINTER
+    add  x1, x1, :lo12:DTB_POINTER
+    str  x0, [x1]
     /* The stack the linker script reserved. AArch64 requires sp to stay 16-byte aligned. */
     adrp x0, stack_top
     add  x0, x0, :lo12:stack_top
     mov  sp, x0
-
-    /* The firmware's device tree pointer arrives in x0. Keep it before anything else uses x0. */
-    adrp x1, DTB_POINTER
-    add  x1, x1, :lo12:DTB_POINTER
-    str  x0, [x1]
 
     /* Interrupts off until the GIC is ready; FP/SIMD on, because the compiler emits it for ordinary copies. */
     msr daifset, #0xf
