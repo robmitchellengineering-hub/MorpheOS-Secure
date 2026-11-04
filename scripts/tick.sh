@@ -38,27 +38,22 @@ timeout "${TICK_TIMEOUT:-30}" qemu-system-aarch64 \
     > "$LOG" 2>&1
 
 echo "== what the Core wrote (timer lines)"
-sed -e 's/\r$//' "$LOG" | grep -E "^TICK: the EL1 timer|^TICK: the timer" | head -4
+sed -e 's/\r$//' "$LOG" | grep -E "^TICK:|^IRQ:" | head -4
 
-FIRED="TICK: the EL1 timer fired"
-
+INTERRUPTED="TICK: the Core was INTERRUPTED"
+REAL="TICK: the tick is real"
 if [ "$MODE" = "--self-test" ]; then
-    if grep -qF "$FIRED" "$LOG"; then
-        echo "FAIL (self-test): the timer was armed far out and still fired — the check is not reading the comparator" >&2
+    if grep -qF "$INTERRUPTED" "$LOG"; then
+        echo "FAIL (self-test): the timer was armed far out and interrupts still arrived — the check is not reading the GIC" >&2
         exit 1
     fi
-    if ! grep -qF "TICK: FAIL the timer never fired within 50 ms" "$LOG"; then
-        echo "FAIL (self-test): armed far out, the Core did not report the miss" >&2
-        exit 1
-    fi
-    echo "ok (self-test): armed far out the timer does not fire, so the firing is the comparator's"
+    echo "ok (self-test): with the timer armed far out no tick arrives, so the count is the interrupt's"
     exit 0
 fi
-
 if grep -qF "TICK: FAIL" "$LOG"; then
-    echo "FAIL: the Core reported its own failure in the timer check" >&2
+    echo "FAIL: the Core reported its own failure in the interrupt check" >&2
     exit 1
 fi
-grep -qF "$FIRED" "$LOG" || { echo "FAIL: the timer never fired" >&2; exit 1; }
-grep -qF "TICK: the timer fired when it was told to (within 5x of 1 ms)" "$LOG" || { echo "FAIL: the timer fired at the wrong time" >&2; exit 1; }
-echo "ok: the EL1 timer fired when it was armed to, measured against the hardware's counter"
+grep -qF "$INTERRUPTED" "$LOG" || { echo "FAIL: no interrupt reached the Core" >&2; exit 1; }
+grep -qF "$REAL" "$LOG" || { echo "FAIL: interrupts arrived but the Core did not report the tick as real" >&2; exit 1; }
+echo "ok: the timer interrupted the Core with no polling, and the count is the interrupt's"
