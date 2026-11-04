@@ -27,3 +27,6 @@ mmu-mutant-map-guard = []
 # The mutation for M4a: do not switch stacks — run the task on the Core's own stack. The task's
 # "own stack" line must then disappear (or the Core's state be corrupted), so the check goes red.
 task-mutant-no-switch = []
+# The mutation for M4b: give the task the Core's own tables, so the private block IS reachable and
+# the violation the check requires cannot happen.
+task-mutant-share-tables = []

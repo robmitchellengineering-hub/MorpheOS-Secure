@@ -39,6 +39,67 @@ static mut L1: Table = Table([0; 512]);
 static mut L2_DEVICE: Table = Table([0; 512]); // 0x0000_0000 .. 0x4000_0000
 static mut L2_RAM: Table = Table([0; 512]); // 0x4000_0000 .. 0x8000_0000
 
+/// The task's own tables: the same Device memory (a task must be able to reach the console it is given), its own RAM
+/// table, and one block — `PRIVATE` — deliberately absent. That absence is the whole claim: the task is not refused
+/// access to the Core's memory, the address does not exist in its address space.
+static mut L1_TASK: Table = Table([0; 512]);
+static mut L2_TASK: Table = Table([0; 512]);
+
+/// The block a task cannot reach. Inside RAM (so a fault is a translation fault, not a bus error) and inside the
+/// region the Core does map for itself.
+pub const PRIVATE: usize = 0x4E00_0000;
+
+/// Build the task's tables from the Core's, with `PRIVATE`'s block left invalid.
+pub fn build_task_tables() {
+    // SAFETY: statics, 4 KiB aligned, and this runs before any switch.
+    unsafe {
+        let l1 = &mut *core::ptr::addr_of_mut!(L1_TASK);
+        let task = &mut *core::ptr::addr_of_mut!(L2_TASK);
+        let ram = &*core::ptr::addr_of!(L2_RAM);
+
+        l1.0[0] = core::ptr::addr_of!(L2_DEVICE) as u64 | DESC_VALID | DESC_TABLE;
+        l1.0[1] = core::ptr::addr_of!(L2_TASK) as u64 | DESC_VALID | DESC_TABLE;
+
+        let private_block = (PRIVATE - 0x4000_0000) / BLOCK as usize;
+        for i in 0..120 {
+            if i == private_block {
+                // The mutation turns this block back on, so the task can reach what it must not.
+                if cfg!(feature = "task-mutant-share-tables") {
+                    task.0[i] = ram.0[i];
+                }
+                continue;
+            }
+            task.0[i] = ram.0[i];
+        }
+    }
+}
+
+/// Switch the translation regime. `ttbr0_el1` is the whole of a task's address space on this rung.
+///
+/// # Safety
+/// The tables must be built, and the code executing the switch must be mapped in *both* regimes.
+pub unsafe fn use_task_tables() {
+    let ttbr0 = core::ptr::addr_of!(L1_TASK) as u64;
+    // SAFETY: called with the tables built; the switch flushes the TLB for the new regime.
+    unsafe {
+        asm!("msr ttbr0_el1, {0}", in(reg) ttbr0, options(nostack));
+        asm!("dsb ish", "tlbi vmalle1", "dsb ish", "isb");
+    }
+}
+
+/// Back to the Core's own tables.
+///
+/// # Safety
+/// As `use_task_tables`.
+pub unsafe fn use_core_tables() {
+    let ttbr0 = core::ptr::addr_of!(L1) as u64;
+    // SAFETY: as above.
+    unsafe {
+        asm!("msr ttbr0_el1, {0}", in(reg) ttbr0, options(nostack));
+        asm!("dsb ish", "tlbi vmalle1", "dsb ish", "isb");
+    }
+}
+
 /// Build the identity map described in the module note. Called once, before anything else touches memory that matters.
 pub fn build() {
     // SAFETY: these tables are static, aligned to 4 KiB, and this runs once before the MMU is on.
