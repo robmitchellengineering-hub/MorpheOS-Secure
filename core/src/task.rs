@@ -35,16 +35,16 @@ pub type Entry = fn() -> u64;
 /// the entry must not return into the Core's stack.
 pub unsafe fn run(entry: Entry, stack_top: usize) -> u64 {
     let mut result: u64;
-    // SAFETY: the caller guarantees the stack. x19 (a callee-saved register) holds the Core's sp across the call.
+    // SAFETY: the caller guarantees the stack. x20 holds the Core's sp (x19 is reserved by LLVM and cannot be an asm operand) across the call.
     unsafe {
         core::arch::asm!(
-            "mov x19, sp",
+            "mov x20, sp",
             "mov sp, {stack}",
             "bl {entry}",
-            "mov sp, x19",
+            "mov sp, x20",
             stack = in(reg) stack_top,
             entry = in(reg) entry as usize,
-            out("x19") _,
+            out("x20") _,
             lateout("x0") result,
         );
     }
