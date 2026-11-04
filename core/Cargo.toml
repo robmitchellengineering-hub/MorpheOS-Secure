@@ -47,3 +47,5 @@ preempt-demo = []
 sched-mutant-ignore-priority = []
 # M7a's mutation: accept every certificate. The over-budget case must then be admitted and the gate must go red.
 cert-mutant-skip-check = []
+# M7c's mutation: allow a derivation to widen, the one thing authority must never do.
+cap-mutant-widen = []

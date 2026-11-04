@@ -21,11 +21,33 @@ use crate::uart::Uart;
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct ObjectId(pub u8);
 
+/// What a capability permits. Three bits are enough to state the property that matters: a derived capability may
+/// only ever be a SUBSET of its parent, so authority can narrow and never grow. Widening is not a policy the Core
+/// applies — it is an operation that does not exist.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Rights(pub u32);
+
+impl Rights {
+    pub const READ: Rights = Rights(1);
+    pub const WRITE: Rights = Rights(2);
+    pub const GRANT: Rights = Rights(4);
+
+    pub const fn union(self, other: Rights) -> Rights {
+        Rights(self.0 | other.0)
+    }
+
+    /// `true` when `self` permits everything `wanted` permits — the test a derivation must pass.
+    pub const fn covers(self, wanted: Rights) -> bool {
+        self.0 & wanted.0 == wanted.0
+    }
+}
+
 /// A capability: proof that a task was handed an object. It is deliberately a token with no methods that reach the
 /// object — holding it is the whole authority, and losing it is the whole revocation.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Cap {
     pub object: ObjectId,
+    pub rights: Rights,
 }
 
 /// What the Core says when a task names an object it does not hold.
@@ -49,16 +71,21 @@ impl CapTable {
 
     /// The Core hands a task a capability. This is the only constructor of `Cap` in the machine.
     pub fn grant(&mut self, object: ObjectId) -> Cap {
+        self.grant_with(object, Rights(Rights::READ.0 | Rights::WRITE.0))
+    }
+
+    /// Hand out a capability with explicit rights. Only the Core calls this.
+    pub fn grant_with(&mut self, object: ObjectId, rights: Rights) -> Cap {
         assert!(object.0 < 64, "object id outside the M1 table");
         self.bits |= 1 << object.0;
-        Cap { object }
+        Cap { object, rights }
     }
 
     /// The check the Core performs on every access. It takes the *name* of the object, not a cap, because a task that
     /// holds a stale or forged cap must fail here exactly like a task that never had one.
     pub fn check(&self, task: &'static str, object: ObjectId) -> Result<Cap, Denied> {
         if object.0 < 64 && self.bits & (1 << object.0) != 0 {
-            Ok(Cap { object })
+            Ok(Cap { object, rights: Rights(Rights::READ.0 | Rights::WRITE.0) })
         } else {
             Err(Denied { task, object })
         }
@@ -66,6 +93,24 @@ impl CapTable {
 
     pub fn holds(&self, object: ObjectId) -> bool {
         object.0 < 64 && self.bits & (1 << object.0) != 0
+    }
+}
+
+/// Why a derivation was refused.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Widen {
+    pub held: Rights,
+    pub wanted: Rights,
+}
+
+/// Derive a narrower capability. `Ok` only when the wanted rights are a subset of what the capability already holds;
+/// otherwise the derivation does not happen. The mutation makes widening succeed, which is exactly the failure the
+/// property exists to forbid.
+pub fn derive(cap: Cap, wanted: Rights) -> Result<Cap, Widen> {
+    if cfg!(feature = "cap-mutant-widen") || cap.rights.covers(wanted) {
+        Ok(Cap { object: cap.object, rights: wanted })
+    } else {
+        Err(Widen { held: cap.rights, wanted })
     }
 }
 
