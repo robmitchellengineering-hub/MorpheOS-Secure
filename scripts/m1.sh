@@ -63,13 +63,25 @@ for line in "$ALLOW_BENCH" "$DENY_BENCH" "$ALLOW_PLUGIN" "$DENY_PLUGIN"; do
 done
 
 if [ "$MODE" = "--self-test" ]; then
-    # With the mutation on, the Core MUST allow what it refuses in the real build. If the denial lines are still
-    # present, the mutation did nothing and the check is not testing the table.
-    if grep -qF "$DENY_BENCH" "$LOG" || grep -qF "$DENY_PLUGIN" "$LOG"; then
-        echo "FAIL (self-test): the mutation did not change the verdict — the check is not reading the Core's table" >&2
+    # The mutation grants `task_bench` the object the real build refuses, so EXACTLY ONE verdict must flip:
+    #   DENY_BENCH  must be GONE  (the capability is now held)
+    #   DENY_PLUGIN must REMAIN   (the mutation does not touch task_plugin)
+    #   both ALLOWs must remain
+    # The first version of this check required *both* denials to vanish, which the mutation never does - so it
+    # failed on a correct Core. Measured on studio-linux2 and fixed here rather than relaxed.
+    if grep -qF "$DENY_BENCH" "$LOG"; then
+        echo "FAIL (self-test): the mutation did not remove the refusal it must remove — the check is not reading the table" >&2
         exit 1
     fi
-    echo "ok (self-test): granting the capability changed the verdict, so the check is the Core's table"
+    if ! grep -qF "$DENY_PLUGIN" "$LOG"; then
+        echo "FAIL (self-test): the mutation removed a refusal it must NOT touch (task_plugin lost its refusal)" >&2
+        exit 1
+    fi
+    if ! grep -qF "$ALLOW_BENCH" "$LOG" || ! grep -qF "$ALLOW_PLUGIN" "$LOG"; then
+        echo "FAIL (self-test): the granted paths did not stay allowed under the mutation" >&2
+        exit 1
+    fi
+    echo "ok (self-test): the mutation flipped exactly one verdict, so the check reads the Core's table"
     exit 0
 fi
 
