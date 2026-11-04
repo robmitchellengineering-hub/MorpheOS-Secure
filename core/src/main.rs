@@ -220,17 +220,25 @@ pub extern "C" fn kmain() -> ! {
     } else {
         uart.write_line("TICK: the counter advances");
     }
-    // A deadline: 1 ms, measured in the hardware's own units.
-    let deadline = clock::now() + clock::ticks_for_ms(1);
+    // A deadline: 1 ms, measured in the hardware's own units, and measured ONLY around the wait.
+    //
+    // Measured wrong the first time: the reading was taken before the line above was printed, so the console write
+    // (~100 characters at 115200 baud) was counted as part of a 1 ms deadline — which is where the reported 10.8 ms
+    // came from. A latency figure that includes the instrument is not a latency figure.
+    let before = clock::now();
+    let deadline = before + clock::ticks_for_ms(1);
     let reached = clock::wait_until(deadline);
-    let elapsed_ns = clock::ns_between(after, reached);
+    let elapsed_ns = clock::ns_between(before, reached);
     uart.write_str("TICK: a 1 ms deadline was reached, 0x");
     uart.write_hex(elapsed_ns);
-    uart.write_line(" ns after the previous reading");
-    if reached >= deadline && elapsed_ns >= 1_000_000 {
-        uart.write_line("TICK: the deadline was honoured in real time");
-    } else {
+    uart.write_line(" ns after the wait began");
+    // Strict, and on purpose: a 1 ms deadline met in 10 ms is a miss, and a bound that accepts it is not a bound.
+    if elapsed_ns >= 1_000_000 && elapsed_ns <= 3_000_000 {
+        uart.write_line("TICK: the deadline was honoured in real time (within 3 ms of a 1 ms target)");
+    } else if elapsed_ns < 1_000_000 {
         uart.write_line("TICK: FAIL the deadline returned before its time");
+    } else {
+        uart.write_line("TICK: FAIL the deadline missed by more than 3x — real-time budget not met");
     }
 
     // ---- M2: the ledger. ----
