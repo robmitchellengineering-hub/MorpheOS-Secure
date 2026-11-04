@@ -31,7 +31,9 @@ impl Slot {
             Slot::B => Slot::A,
         }
     }
-    pub fn id(self) -> u8 {
+    /// The id the record stores. `u32` because the record is a fixed-width structure on a medium, and a width
+    /// disagreement between the type and its own record is a compile error — which is how this was caught.
+    pub fn id(self) -> u32 {
         match self {
             Slot::A => 1,
             Slot::B => 2,
