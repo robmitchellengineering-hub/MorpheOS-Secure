@@ -68,6 +68,22 @@ impl Uart {
         }
     }
 
+    /// Hex, because a fault report is read by an engineer, not a person on a phone.
+    pub fn write_hex(&self, value: u64) {
+        const DIGITS: &[u8; 16] = b"0123456789abcdef";
+        self.write_str("0x");
+        let mut started = false;
+        for shift in (0..16).rev() {
+            let nibble = ((value >> (shift * 4)) & 0xf) as usize;
+            if nibble != 0 {
+                started = true;
+            }
+            if started || shift == 0 {
+                self.write_byte(DIGITS[nibble]);
+            }
+        }
+    }
+
     pub fn write_line(&self, text: &str) {
         self.write_str(text);
         self.write_byte(b'\n');

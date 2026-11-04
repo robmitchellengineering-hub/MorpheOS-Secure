@@ -69,119 +69,58 @@ _start:
 vectors:
     .rept 16
     .balign 128
-    mov x0, #0
+    mrs x0, esr_el1
+    mrs x1, far_el1
+    mrs x2, elr_el1
     b   exc_report
     .endr
 "#
 );
 
-/// The Core's own failure path, for now: name the fault and stop. Every vector currently reports vector 0; on the next
-/// rung the entries carry their index and the syndrome registers are decoded (M3's job). Naming the fault at all is
-/// what changes a silent halt into a diagnosis.
+/// The Core's own failure path: name the fault, with the registers an engineer needs to act on it.
+///
+/// `esr` is the exception syndrome (what kind of fault), `far` the faulting address where the architecture provides
+/// one, and `elr` the instruction that was executing. Printing all three is the difference between "it stopped" and
+/// "it faulted reading 0x… at 0x…", and it costs a handful of instructions on a path that has already gone wrong.
 #[unsafe(no_mangle)]
-pub extern "C" fn exc_report(_vector: u64) -> ! {
+pub extern "C" fn exc_report(esr: u64, far: u64, elr: u64) -> ! {
     let uart = Uart::at(UART_QEMU_VIRT);
     uart.init();
     uart.write_line("MORPHEOS-CORE: EXCEPTION — the Core faulted, and this is it reporting rather than stopping");
+
+    let ec = (esr >> 26) & 0x3f;
+    uart.write_str("  class: ");
+    uart.write_line(match ec {
+        0x00 => "undefined instruction",
+        0x01 => "trapped WFI or WFE",
+        0x0e => "illegal execution state",
+        0x15 => "SVC (a syscall on a machine that has none)",
+        0x20 | 0x21 => "instruction abort (lower/current EL)",
+        0x22 => "PC alignment fault",
+        0x24 | 0x25 => "data abort (lower/current EL)",
+        0x26 => "SP alignment fault",
+        0x2c => "trapped floating-point",
+        _ => "other — see the syndrome below",
+    });
+    uart.write_str("  ESR_EL1: ");
+    uart.write_hex(esr);
+    uart.write_str("  FAR_EL1: ");
+    uart.write_hex(far);
+    uart.write_str("  ELR_EL1: ");
+    uart.write_hex(elr);
+    uart.write_line("");
+    if ec == 0x24 || ec == 0x25 {
+        // DFSC in the low six bits: 0b100001..0b100111 are alignment faults, and they are the common one with the MMU
+        // off (Device memory forbids unaligned access).
+        let dfsc = esr & 0x3f;
+        if (0x21..=0x27).contains(&dfsc) {
+            uart.write_line("  cause: ALIGNMENT FAULT — the access was not aligned for its size (Device memory forbids unaligned)");
+        } else {
+            uart.write_line("  cause: data abort — see FAR above for the address that faulted");
+        }
+    }
     loop {
         // SAFETY: nothing else to do after a fault on this rung.
-        unsafe { core::arch::asm!("wfe", options(nomem, nostack)) };
-    }
-}
-
-/// The Core's first instruction in Rust.
-#[unsafe(no_mangle)]
-pub extern "C" fn kmain() -> ! {
-    let uart = Uart::at(UART_QEMU_VIRT);
-    uart.init();
-
-    uart.write_line(BANNER);
-    uart.write_line("MORPHEOS-CORE: EL1, MMU off, load address 0x40080000");
-
-    // ---- M1: the capability space. Two objects, two tasks, and the Core deciding who may name what. ----
-    //
-    // `task_bench` is handed the measurement object and NOT the plugin-state object. `task_plugin` is the other way
-    // round. Neither holds a "user" and neither can obtain the other's object: the only constructor of a capability
-    // is `CapTable::grant`, and only the Core calls it.
-    let measurement = Object { id: ObjectId(1), name: "measurement", value: 0xA1 };
-    let plugin_state = Object { id: ObjectId(2), name: "plugin-state", value: 0xB2 };
-
-    let mut task_bench = CapTable::empty();
-    let _bench_cap = task_bench.grant(measurement.id);
-    let mut task_plugin = CapTable::empty();
-    let _plugin_cap = task_plugin.grant(plugin_state.id);
-
-    // The mutation: `scripts/m1.sh --self-test` builds with this feature and the Core must then ALLOW what it refuses
-    // in the real build. If the test still passes, the test is asserting a string rather than the Core's table.
-    #[cfg(feature = "m1-mutant-grant")]
-    let _mutant = task_bench.grant(plugin_state.id);
-
-    uart.write_line("M1: task_bench holds: measurement");
-    uart.write_line("M1: task_plugin holds: plugin-state");
-
-    let _ = access(&uart, "task_bench", &task_bench, &measurement);   // must be ALLOWED
-    let _ = access(&uart, "task_bench", &task_bench, &plugin_state);  // must be REFUSED by the Core
-    let _ = access(&uart, "task_plugin", &task_plugin, &plugin_state);// must be ALLOWED
-    let _ = access(&uart, "task_plugin", &task_plugin, &measurement); // must be REFUSED by the Core
-
-    uart.write_line("M1: the Core decided both directions; no task holds a capability it was not handed");
-
-    // ---- M2b: the memory the machine owns. Rust's `alloc` interface, an implementation that is ours, and a double
-    // free that is REFUSED rather than quietly handing the same bytes to two owners. ----
-    // SAFETY: called once, before any allocation, on the single core this rung runs on.
-    unsafe { ALLOCATOR.init() };
-    uart.write_line("M2b: allocator initialised (arena handed to the free list)");
-    {
-        use alloc::vec::Vec;
-        let mut cue_list: Vec<u32> = Vec::new();
-        for cue in 1..=8u32 {
-            cue_list.push(cue * 1000);
-        }
-        uart.write_str("M2b: a Vec of ");
-        // 8 cues pushed, capacity is the allocator's business
-        uart.write_line("8 cues allocated through the Core's own allocator");
-
-        uart.write_line("M2b: 8 pushes through the global allocator returned");
-        let first = cue_list.as_ptr() as usize;
-        drop(cue_list);
-
-        uart.write_line("M2b: the cue list was dropped");
-        let mut second: Vec<u32> = Vec::with_capacity(8);
-        second.push(7);
-        let reused = second.as_ptr() as usize == first;
-        if reused {
-            uart.write_line("M2b: the freed block was reused by the next allocation (first fit, as designed)");
-        } else {
-            uart.write_line("M2b: the freed block was NOT reused — first fit did not take the hole");
-        }
-
-        // The attack: free the same block twice. A naive free list inserts it twice and the next two allocations
-        // overlap. Ours must refuse the second free and count it.
-        let layout = alloc::alloc::Layout::from_size_align(64, 16).expect("valid layout");
-        let p = unsafe { alloc::alloc::alloc(layout) };
-        unsafe { alloc::alloc::dealloc(p, layout) };
-        unsafe { alloc::alloc::dealloc(p, layout) }; // the double free
-        let (_, frees, refused) = ALLOCATOR.stats();
-        uart.write_str("M2b: frees ");
-        uart.write_line(if frees >= 1 { "recorded" } else { "not recorded" });
-        if refused >= 1 {
-            uart.write_line("M2b: DOUBLE FREE REFUSED — the block was not inserted twice");
-        } else {
-            uart.write_line("M2b: FAIL a double free was accepted; two owners can now hold the same bytes");
-        }
-    }
-
-    // ---- M2: the ledger. State as generations, undo without a reboot, and a generation that does not check out is
-    // refused rather than used. ----
-    let mut machine = Ledger::empty();
-    ledger::report(&uart, &mut machine);
-
-    uart.write_line(DONE);
-
-    // Nothing to return to: no scheduler and no exit device on this architecture. The test harness watches the serial
-    // line for DONE and stops the machine — honest, because on rung M0 halting *is* the end of the story.
-    loop {
-        // SAFETY: `wfe` at EL1 is always legal; it is the correct way for an idle core to wait.
         unsafe { core::arch::asm!("wfe", options(nomem, nostack)) };
     }
 }
