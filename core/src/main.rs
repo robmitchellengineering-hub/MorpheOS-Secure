@@ -7,9 +7,9 @@
 //! The falsifier is the point: `scripts/m0.sh` boots this in QEMU and fails unless the exact line below appears on
 //! the serial port — and it also boots a build whose line is deliberately wrong, to prove the check can fail.
 //!
-//! WHAT IS NOT OURS YET, stated rather than implied: on M0 the loader is QEMU's multiboot loader. Writing our own
-//! loader (`morph-loader`) is rung M0b, with its own falsifier, because a loader with no Core to load would be a
-//! solution to the wrong problem first.
+//! WHAT IS OURS NOW: the loader (`loader/loader.S`) places this image at 2 MiB, builds the page tables, selects a
+//! 64-bit code segment and jumps here. What still belongs to whatever put the *loader* in memory is just the file
+//! read — and rung M0b-2 moves that, with the two generations and the one-shot trial, into our loader too.
 
 #![no_std]
 #![no_main]
@@ -32,104 +32,22 @@ const QEMU_EXIT_FAIL: u32 = 0x11;
 mod serial;
 use serial::Serial;
 
-// The multiboot header, and the entry point. Both must be assembly: the loader looks for a magic number in the
-// first 8 KiB of the image before any Rust exists, and it jumps to a symbol with no stack promised.
+// The Core's entry point. It is the first byte of the image (`.text.entry` in linker.ld), because `morph-loader`
+// copies this blob to 2 MiB and jumps to that address with a 64-bit code segment already selected and the page
+// tables already on. Everything before this point is the loader's job, and the loader is ours: `loader/loader.S`.
+//
+// The stack is ours too — the loader promises a stack pointer but not a stack we own, so the first instruction here
+// switches to the one the linker script reserved.
 global_asm!(
     r#"
     .intel_syntax noprefix
-
-    /* ---- the multiboot header. The loader searches for this magic in the first 8 KiB and nothing else ---- */
-    .section .multiboot, "a"
-    .align 4
-    .long 0x1BADB002
-    .long 0x00000000
-    .long -(0x1BADB002 + 0)
-
-    .section .text
-    .code32
+    .section .text.entry, "ax"
     .global _start
 _start:
-    cli
-
-    /* OUR GDT, not the loader's: a 64-bit code segment and a flat data segment. The loader's GDT is not ours to
-     * rely on, and after the far jump below nothing of the loader's is left in the path. */
-    lgdt [gdt64_ptr]
-
-    /* Identity-map the first 1 GiB with 2 MiB pages: pml4[0] -> pdpt[0] -> pd[0..512]. Nothing above 1 GiB exists
-     * on rung M0b, and a Core that maps memory it has not asked for is a Core that lies about what it owns. */
-    mov edi, offset pd
-    mov eax, 0x83                 /* present | writable | 2 MiB page */
-    mov ecx, 512
-1:  mov [edi], eax
-    add eax, 0x200000
-    add edi, 8
-    loop 1b
-
-    mov dword ptr [pdpt], offset pd
-    or  dword ptr [pdpt], 3
-    mov dword ptr [pdpt + 4], 0
-
-    mov dword ptr [pml4], offset pdpt
-    or  dword ptr [pml4], 3
-    mov dword ptr [pml4 + 4], 0
-
-    /* PAE, then the long-mode enable bit, then paging — the order the CPU requires. */
-    mov eax, cr4
-    or  eax, 0x20                 /* CR4.PAE */
-    mov cr4, eax
-
-    mov eax, offset pml4
-    mov cr3, eax
-
-    mov ecx, 0xC0000080           /* EFER */
-    rdmsr
-    or  eax, 0x100                /* EFER.LME */
-    wrmsr
-
-    mov eax, cr0
-    or  eax, 0x80000000           /* CR0.PG */
-    mov cr0, eax
-
-    /* A far jump with the 64-bit selector: the only way into 32/64 mode, encoded by hand because the assembler's
-     * mnemonic for it differs between syntaxes and this must not be a guess. */
-    .byte 0xEA
-    .long long_mode
-    .word 0x08
-
-    .code64
-long_mode:
-    mov ax, 0x10
-    mov ds, ax
-    mov es, ax
-    mov fs, ax
-    mov gs, ax
-    mov ss, ax
-
-    /* The stack the linker script gave us. After this point everything is Rust, and the loader's only remaining
-     * role is that it read the file. */
     lea rsp, [rip + stack_top]
     call kmain
-
-2:  hlt
-    jmp 2b
-
-    /* The page tables the stub builds. Zeroed by the loader because they are part of the image's memory size. */
-    .section .bss
-    .align 4096
-pml4:  .skip 4096
-pdpt:  .skip 4096
-pd:    .skip 4096
-
-    .section .data
-    .align 8
-gdt64:
-    .quad 0
-    .quad 0x00AF9A000000FFFF      /* 64-bit code, present, DPL0, readable */
-    .quad 0x00CF92000000FFFF      /* flat data, present, writable */
-gdt_end:
-gdt64_ptr:
-    .word gdt_end - gdt64 - 1
-    .long gdt64
+1:  hlt
+    jmp 1b
 "#
 );
 

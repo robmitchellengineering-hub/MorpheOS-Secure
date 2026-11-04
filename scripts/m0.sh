@@ -22,13 +22,36 @@ case "$MODE" in check|--self-test) ;; *) echo "usage: m0.sh [--self-test]" >&2; 
 command -v cargo >/dev/null 2>&1 || { echo "REFUSED: no cargo here — this needs a Rust toolchain" >&2; exit 2; }
 command -v qemu-system-x86_64 >/dev/null 2>&1 || { echo "REFUSED: no qemu-system-x86_64 here — nothing can boot the Core" >&2; exit 2; }
 
+command -v as >/dev/null 2>&1 || { echo "REFUSED: no assembler for morph-loader" >&2; exit 2; }
+command -v objcopy >/dev/null 2>&1 || { echo "REFUSED: no objcopy to flatten the Core" >&2; exit 2; }
+
 echo "== building the Core for x86_64-unknown-none"
 if ! cargo build -q -p morph-core --target x86_64-unknown-none --release; then
     echo "FAIL: the Core did not build" >&2
     exit 1
 fi
-ELF=target/x86_64-unknown-none/release/morph-core
-[ -f "$ELF" ] || { echo "FAIL: no ELF at $ELF" >&2; exit 1; }
+CORE_ELF=target/x86_64-unknown-none/release/morph-core
+[ -f "$CORE_ELF" ] || { echo "FAIL: no ELF at $CORE_ELF" >&2; exit 1; }
+
+# The Core becomes a flat binary: the loader copies those bytes to 2 MiB and jumps to the first one. objcopy starts
+# the file at the lowest section address (2 MiB), so the blob has no leading padding to strip.
+mkdir -p "$WORK"
+if ! objcopy -O binary "$CORE_ELF" "$WORK/core.bin"; then
+    echo "FAIL: the Core did not flatten" >&2
+    exit 1
+fi
+echo "   core.bin: $(wc -c < "$WORK/core.bin") bytes"
+
+echo "== building morph-loader (32-bit, the Core embedded)"
+if ! as --32 -I "$WORK" -o "$WORK/loader.o" loader/loader.S; then
+    echo "FAIL: the loader did not assemble" >&2
+    exit 1
+fi
+if ! ld -m elf_i386 -T loader/loader.ld -o "$WORK/loader.elf" "$WORK/loader.o"; then
+    echo "FAIL: the loader did not link" >&2
+    exit 1
+fi
+ELF="$WORK/loader.elf"
 
 BANNER="MORPHEOS-CORE 0.0.1: the Core is running; no Linux, no syscalls, no processes"
 EXPECT="$BANNER"
@@ -42,7 +65,7 @@ mkdir -p "$WORK"
 LOG="$WORK/serial.log"
 rm -f "$LOG"
 
-echo "== booting it in QEMU (no Linux, no bootloader of ours yet: QEMU's multiboot loader, stated in CORE.md)"
+echo "== booting morph-loader -> the Core in QEMU (our own 32-bit entry, our GDT, our page tables, long mode)"
 # -kernel loads the ELF through QEMU's multiboot loader. isa-debug-exit is how the Core reports an exit code with no
 # OS to return to. No display: the serial line is the whole verdict.
 timeout 60 qemu-system-x86_64 \
