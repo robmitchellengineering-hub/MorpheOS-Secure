@@ -8,6 +8,14 @@ SECTIONS
 {
     . = 0x40080000;
 
+    /* FIRST BYTES OF THE IMAGE. The AArch64 boot protocol expects the Image header at offset 0, and the Pi's firmware
+       will look for exactly that; measured on QEMU, without this the extracted image did not carry the ARM\x64 marker
+       where the protocol says it is. */
+    .text.head : ALIGN(16)
+    {
+        KEEP(*(.text.head))
+    }
+
     .text.entry : ALIGN(16)
     {
         KEEP(*(.text.entry))

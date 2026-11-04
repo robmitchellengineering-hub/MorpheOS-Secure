@@ -151,6 +151,7 @@ global_asm!(
 
     .section .text.entry, "ax"
     .global _start
+    .section .text.head, "ax"
     .balign 8
 image_header:
     b       _start
