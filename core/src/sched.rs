@@ -103,7 +103,13 @@ pub fn on_irq(sp: usize) -> usize {
             // would be a jump into nothing.
             return sp;
         }
+        // The mutation: record the intent but answer with the same frame, so the machine looks alive and never runs
+        // anything else. Every counter still moves; only the sequence is wrong.
+        if cfg!(feature = "sched-mutant-no-switch") {
+            return sp;
+        }
         core::ptr::write_volatile(core::ptr::addr_of_mut!(CURRENT), next);
+        core::ptr::write_volatile(core::ptr::addr_of_mut!(MOVED), core::ptr::read_volatile(core::ptr::addr_of!(MOVED)) + 1);
         incoming
     }
 }
@@ -115,6 +121,23 @@ pub fn record_current(sp: usize) {
         let ctx = core::ptr::addr_of_mut!(CTX) as *mut usize;
         core::ptr::write_volatile(ctx, sp);
     }
+}
+
+/// Install the second task's frame, so the first switch has somewhere to go.
+pub fn install_second(frame: usize) {
+    // SAFETY: ordered by the boot before switching is enabled.
+    unsafe {
+        let ctx = core::ptr::addr_of_mut!(CTX) as *mut usize;
+        core::ptr::write_volatile(ctx.add(1), frame);
+    }
+}
+
+/// How many times the CPU actually moved between tasks. Read by the boot so the count is evidence, not belief.
+pub static mut MOVED: u64 = 0;
+
+pub fn moved() -> u64 {
+    // SAFETY: written only by the interrupt handler.
+    unsafe { core::ptr::read_volatile(core::ptr::addr_of!(MOVED)) }
 }
 
 /// The tasks this rung knows about. Two is enough to prove a choice is being made.
