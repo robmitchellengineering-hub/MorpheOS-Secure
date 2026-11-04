@@ -65,6 +65,10 @@ pub fn find_compatible(blob: usize, wanted: &str) -> Result<Answered, Refused> {
     }
 
     let mut depth_match = false;
+    // A node's properties may appear in EITHER order, and real trees put `reg` before `compatible` often enough that
+    // matching only in one order silently finds nothing — measured on QEMU's own tree. So the node's reg is kept and
+    // the answer is returned whichever arrives second.
+    let mut pending_reg: Option<Answered> = None;
     let mut nodes = 0usize;
     let mut cursor = off_struct;
     while cursor + 4 <= total {
@@ -87,6 +91,7 @@ pub fn find_compatible(blob: usize, wanted: &str) -> Result<Answered, Refused> {
                 }
                 cursor = (cursor + 3) & !3;
                 depth_match = false;
+                pending_reg = None;
             }
             FDT_END_NODE => {
                 depth_match = false;
@@ -122,14 +127,23 @@ pub fn find_compatible(blob: usize, wanted: &str) -> Result<Answered, Refused> {
                         }
                         start = end + 1;
                     }
-                } else if name == b"reg" && depth_match {
+                } else if name == b"reg" {
                     if len < 8 {
                         return Err(Refused::NotFound);
                     }
                     let hi = read_u32(base, cursor) as u64;
                     let lo = read_u32(base, cursor + 4) as u64;
                     let size = if len >= 16 { read_u32(base, cursor + 12) as u64 } else { 0 };
-                    return Ok(Answered { base: (hi << 32) | lo, size });
+                    let answer = Answered { base: (hi << 32) | lo, size };
+                    if depth_match {
+                        return Ok(answer);
+                    }
+                    pending_reg = Some(answer);
+                }
+                if depth_match {
+                    if let Some(answer) = pending_reg {
+                        return Ok(answer);
+                    }
                 }
                 cursor += (len + 3) & !3;
             }
