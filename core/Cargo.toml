@@ -36,6 +36,3 @@ tick-mutant-frozen = []
 tick-mutant-armed-far = []
 # M5c's policy mutation: always pick task 0, which looks like a scheduler and never runs anything else.
 sched-mutant-always-first = []
-# M5c's switch mutation: record the intent, answer with the same frame. The machine looks alive and never runs
-# anything else, so only a line that cannot print unless another context ran will catch it.
-sched-mutant-no-switch = []
