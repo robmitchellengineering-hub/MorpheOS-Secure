@@ -25,6 +25,7 @@ extern crate alloc;
 #[path = "alloc.rs"]
 mod heap;
 mod box_admission;
+mod ab;
 mod cap;
 mod cert;
 mod clock;
@@ -478,6 +479,8 @@ pub extern "C" fn kmain() -> ! {
     uart.init();
 
     uart.write_line(BANNER);
+
+    ab_demo(&uart);
     uart.write_line("MORPHEOS-CORE: EL1, MMU off, load address 0x40080000");
 
     // ---- M1: the capability space. Two objects, two tasks, and the Core deciding who may name what. ----
@@ -540,7 +543,6 @@ pub extern "C" fn kmain() -> ! {
                 l.flush(&uart);
             }
 
-    ab_demo(&uart);
             Err(_) => uart.write_line("BOX: FAIL an honest box was refused"),
         }
         let lying = box_admission::BoxRequest {
