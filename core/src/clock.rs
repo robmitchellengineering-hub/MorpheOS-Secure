@@ -53,9 +53,10 @@ pub fn ns_between(start: u64, end: u64) -> u64 {
 /// the half of a tick that has nothing to do with the GIC.
 pub fn arm_in(ticks: u64) {
     let tval = if cfg!(feature = "tick-mutant-armed-far") {
-        // The mutation: arm far enough in the future that the deadline cannot arrive within the test. A "tick" that
-        // reports firing under this is not reading the comparator.
-        1 << 60
+        // The mutation: arm far enough out that the deadline cannot arrive inside the test. CNTP_TVAL_EL0 is 32-BIT —
+        // measured: `1 << 60` truncated to zero and the timer fired immediately, so the mutation proved nothing and
+        // the self-test failed. 0x7FFF_FFFF is ~34 s at 62.5 MHz, which is far beyond the poll window and fits.
+        0x7fff_ffffu64
     } else {
         ticks
     };
