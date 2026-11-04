@@ -154,6 +154,18 @@ fn task_entry() -> u64 {
     result
 }
 
+/// Where an aborted task leaves the machine: the Core's stack is back, the violation is already written, and the boot
+/// carries on. This never returns, which is why the switch needs to park only a stack pointer.
+extern "C" fn after_task_aborted() -> ! {
+    let uart = Uart::at(UART_QEMU_VIRT);
+    uart.write_line("M4c: TASK ABORTED — the Core resumed on its own stack, the evidence stays, the boot continues");
+    uart.write_line(DONE);
+    loop {
+        // SAFETY: an aborted task's continuation has nothing to return to on this rung.
+        unsafe { core::arch::asm!("wfe", options(nomem, nostack)) };
+    }
+}
+
 /// The Core's first instruction in Rust.
 #[unsafe(no_mangle)]
 pub extern "C" fn kmain() -> ! {
@@ -212,6 +224,7 @@ pub extern "C" fn kmain() -> ! {
         uart.write_line("MMU: the Core continued past the guard probe — the fault was caught, the machine did not die");
 
     // ---- M4a: a second execution context. The task runs on its OWN stack, and the Core gets its stack back. ----
+    task::set_resume(after_task_aborted);
     let (task_bottom, task_stack_top) = task::region();
     #[cfg(not(feature = "task-mutant-no-switch"))]
     let stack_for_task = task_stack_top;
@@ -224,8 +237,20 @@ pub extern "C" fn kmain() -> ! {
     uart.write_hex(stack_for_task as u64);
     uart.write_line("");
     // SAFETY: the stack is a static 16 KiB region (or, under the mutation, deliberately the wrong one).
-    unsafe { task::run(task_entry, stack_for_task) };
-    let value = unsafe { task::TASK_RESULT };
+    let returned = unsafe { task::run(task_entry, stack_for_task) };
+    let recorded = unsafe { task::TASK_RESULT };
+    // Two sources must agree: what the switch returned and what the task recorded. Disagreement is a bug in the
+    // switch, and it is exactly the class of bug that took three attempts to get out of.
+    let value = if returned == recorded {
+        returned
+    } else {
+        uart.write_str("M4a: FAIL the switch returned 0x");
+        uart.write_hex(returned);
+        uart.write_str(" but the task recorded 0x");
+        uart.write_hex(recorded);
+        uart.write_line("");
+        0
+    };
     // The task returns buffer[0] + buffer[2047] = 0xA5 + 0x5A, so a correct return is exactly 0xFF.
     // The judgement: where did the task's stack ACTUALLY sit, compared with the region the Core handed it?
     let seen = unsafe { task::TASK_STACK_SEEN };
@@ -252,6 +277,7 @@ pub extern "C" fn kmain() -> ! {
         uart.write_str("M4b: FAIL the task read the Core's memory (value ");
         uart.write_hex(stolen);
         uart.write_line(") — the map was supposed to make that impossible");
+        uart.write_line("M4c: NOTE the task returned instead of faulting, so there was no abort to exercise");
         // SAFETY: restore the Core's regime for the rest of the boot.
         unsafe { mmu::use_core_tables() };
         uart.write_line("M4b: the Core is back on its own tables");
@@ -380,11 +406,11 @@ pub extern "C" fn exc_report(esr: u64, far: u64, elr: u64) {
     if far == mmu::PRIVATE as u64 {
         uart.write_line("  M4b: TASK VIOLATION — the task named 0x4E000000, which is absent from its own map");
         uart.write_line("  M4b: the Core maps that block; the task's tables do not. This is containment, not a refusal.");
-        loop {
-            // SAFETY: the task has attempted something the machine cannot allow; on this rung the Core halts with
-            // the evidence written, and task abort (returning to a known-good context) is the next rung.
-            unsafe { core::arch::asm!("wfe", options(nomem, nostack)) };
-        }
+        uart.write_line("  M4b: aborting the task — the Core resumes, the evidence stays");
+        // THE ABORT, rung M4c: instead of halting the machine, give the Core its stack and return address back and
+        // continue as if the task had finished. A task that oversteps is a dead task, not a dead show.
+        // SAFETY: `run` parked the Core's context before the task started.
+        unsafe { task::abort_to_core() };
     }
     if far == GUARD {
         PROBE_FAULTED.store(true, core::sync::atomic::Ordering::SeqCst);

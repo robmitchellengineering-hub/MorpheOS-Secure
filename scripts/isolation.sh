@@ -43,6 +43,8 @@ echo "== what the Core wrote (M4b lines)"
 sed -e 's/\r$//' "$LOG" | grep -E "M4b:|M4a: task frame" | head -8
 
 VIOLATION="M4b: TASK VIOLATION — the task named 0x4E000000, which is absent from its own map"
+ABORTED="M4c: TASK ABORTED — the Core resumed on its own stack, the evidence stays, the boot continues"
+DONE_MARK="MORPHEOS-CORE: reported; halting"
 REACHED="M4b: FAIL the task read the Core's memory"
 
 if [ "$MODE" = "--self-test" ]; then
@@ -66,4 +68,13 @@ if ! grep -qF "$VIOLATION" "$LOG"; then
     echo "FAIL: the task never hit the violation it must (log $LOG)" >&2
     exit 1
 fi
-echo "ok: the task's own map is missing the block, and reaching for it is a violation rather than a request"
+# M4c: the machine must have SURVIVED the task. A violation with no abort is still a dead machine.
+if ! grep -qF "$ABORTED" "$LOG"; then
+    echo "FAIL: the violation was reported but the Core never aborted the task and continued" >&2
+    exit 1
+fi
+if ! grep -qF "$DONE_MARK" "$LOG"; then
+    echo "FAIL: the Core did not reach its own end after the abort - the machine did not survive the task" >&2
+    exit 1
+fi
+echo "ok: the task's map lacked the block, the violation was caught, the task was aborted and the Core reached its end"

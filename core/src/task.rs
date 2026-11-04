@@ -1,65 +1,122 @@
-//! Tasks — a second execution context, rung M4a.
+//! Tasks — a second execution context, and what happens when it oversteps.
 //!
-//! THE CLAIM: the Core can hand the CPU to code that runs on **its own stack**, and take it back afterwards. That is
-//! the smallest thing that must be true before a show can run: the audio engine, its control surface and every node
-//! session are separate execution contexts, and none of them may run on the Core's own stack.
+//! Two claims, and they are the two a show depends on:
+//!   1. the Core hands the CPU to code running on **its own stack**, and takes it back (M4a);
+//!   2. if that code does something the machine cannot allow, the **task** dies and the machine continues (M4c).
 //!
-//! WHAT THIS IS NOT YET, said here rather than implied: this is a **stack switch**, not an address-space switch. The
-//! task shares the Core's page tables (M3a's identity map), so it can still name memory the Core owns — the capability
-//! table refuses what it asks the *Core* for, but nothing stops it writing where it likes. Per-task TTBR0 (a real
-//! address space, and the end of that gap) is the next rung, and it is the one that makes M1's refusals containment
-//! for code that is not the Core itself.
+//! HOW THE SWITCH IS WRITTEN, AND WHY IT TOOK THREE TRIES. The first two versions used `asm!` with `in(reg)` and
+//! `out(reg)` operands. Both failed: the compiler is entitled to allocate an operand to a register the template also
+//! uses, so `mov x20, sp` could overwrite the pointer it was about to store through, and the second version stomped
+//! the statics outright (`frame at 0x1, returned 0x1`). The fix is not another operand constraint: it is to stop
+//! letting the compiler choose. The switch below is a **hand-written function in `global_asm!`** with a normal C
+//! calling convention, so every register is decided here and the Rust side is an ordinary `extern "C"` call.
 //!
-//! A task on this rung is a function and a stack. That is enough to prove the switch and to be honest about what is
-//! missing.
+//! WHAT IT IS NOT: this is a stack switch with a parked stack pointer. The task still shares the Core's page tables
+//! when it is created (M4b gives a task its OWN tables, but the switch does not install them — that is the next rung).
+//! There is no scheduler and no preemption: a task runs until it returns or oversteps.
 
-/// A task's stack. 16 KiB, 16-byte aligned, static: the Core does not yet allocate stacks from the arena because an
-/// allocator that can be asked for a stack during a switch is a new failure mode for a rung that is about switching.
+/// A task's stack. 16 KiB, 16-byte aligned, static.
 #[repr(align(16))]
 pub struct Stack(pub [u8; 16 * 1024]);
 
 pub static mut TASK_STACK: Stack = Stack([0; 16 * 1024]);
 
-/// Where the task's stack actually was, recorded by the task itself. The Core compares it against the region it
-/// handed over — that comparison is what makes the "own stack" claim checkable rather than asserted.
+/// Where the task's frame actually was, recorded by the task; the Core judges it against the region.
 pub static mut TASK_STACK_SEEN: usize = 0;
 
-/// What the task returned. Passed through a static rather than an asm output: measured, the `lateout("x0")` capture
-/// disagreed with the value the task actually produced, and a switch that also has to marshal its result through a
-/// register constraint is a switch with two ways to be wrong. The task writes it; the Core reads it.
+/// What the task returned, as seen by the task itself.
 pub static mut TASK_RESULT: u64 = 0;
 
-/// The task stack region as (bottom, top), so a caller can check an address is inside it.
+/// The Core's stack pointer, parked by the switch. `no_mangle` because the assembly names it.
+#[unsafe(no_mangle)]
+pub static mut CORE_SP: usize = 0;
+
+/// The function an aborted task resumes at. It must not return. `no_mangle` for the same reason.
+#[unsafe(no_mangle)]
+pub static mut RESUME: usize = 0;
+
+/// What a task runs.
+pub type Entry = fn() -> u64;
+
+/// Tell the switch where to go if the task has to be aborted. Called once, before any task runs.
+pub fn set_resume(target: extern "C" fn() -> !) {
+    // SAFETY: single writer, before any task exists.
+    unsafe { RESUME = target as usize };
+}
+
+/// The stack region a task is given, as (bottom, top).
 pub fn region() -> (usize, usize) {
     let bottom = core::ptr::addr_of!(TASK_STACK) as usize;
     (bottom, bottom + core::mem::size_of::<Stack>())
 }
 
-/// What a task runs. Returns a value so the Core can check the task actually ran rather than only that it did not
-/// crash.
-pub type Entry = fn() -> u64;
+unsafe extern "C" {
+    /// x0 = entry, x1 = stack_top. Park the Core's sp, switch, run the entry, come back with its value in x0.
+    fn morph_task_start(entry: usize, stack_top: usize) -> u64;
+    /// Restore the Core's sp and tail-call RESUME. Never returns.
+    fn morph_task_abort() -> !;
+}
 
-/// Run `entry` on `stack_top` and return its value, with the Core's own stack pointer restored afterwards.
-///
-/// The switch is four instructions and it is all in assembly because there is nothing else that can do it: `sp` is
-/// not accessible from stable Rust, and doing this through a "closure on a fake stack" would be a different, weaker
-/// claim.
+use core::arch::global_asm;
+
+global_asm!(
+    r#"
+    .section .text.task, "ax"
+
+    /* extern "C" fn morph_task_start(entry: usize, stack_top: usize) -> u64 */
+    .global morph_task_start
+morph_task_start:
+    stp x29, x30, [sp, #-16]!
+    mov x29, sp
+
+    /* Park the Core's stack pointer in CORE_SP, then switch to the task's. */
+    adrp x9, CORE_SP
+    add  x9, x9, :lo12:CORE_SP
+    mov  x10, sp
+    str  x10, [x9]
+
+    mov  sp, x1          /* the task's stack */
+    blr  x0              /* run the task; its return value arrives in x0 */
+    mov  x19, x0         /* keep it across the switch back */
+
+    adrp x9, CORE_SP
+    add  x9, x9, :lo12:CORE_SP
+    ldr  x10, [x9]
+    mov  sp, x10         /* the Core's stack back */
+
+    ldp x29, x30, [sp], #16
+    mov x0, x19
+    ret
+
+    /* extern "C" fn morph_task_abort() -> ! */
+    .global morph_task_abort
+morph_task_abort:
+    adrp x9, CORE_SP
+    add  x9, x9, :lo12:CORE_SP
+    ldr  x10, [x9]
+    mov  sp, x10         /* the Core's stack back */
+
+    adrp x9, RESUME
+    add  x9, x9, :lo12:RESUME
+    ldr  x11, [x9]
+    br   x11             /* tail-call: the resume function never returns */
+"#
+);
+
+/// Run `entry` on `stack_top` and come back to the Core with its value.
 ///
 /// # Safety
-/// `stack_top` must be the top of a writable, 16-byte aligned region at least as large as the entry's stack use, and
-/// the entry must not return into the Core's stack.
-pub unsafe fn run(entry: Entry, stack_top: usize) {
-    // SAFETY note is on the function; the result arrives through TASK_RESULT.
-    // SAFETY: the caller guarantees the stack. x20 holds the Core's sp (x19 is reserved by LLVM and cannot be an asm operand) across the call.
-    unsafe {
-        core::arch::asm!(
-            "mov x20, sp",
-            "mov sp, {stack}",
-            "blr {entry}",
-            "mov sp, x20",
-            stack = in(reg) stack_top,
-            entry = in(reg) entry as usize,
-            out("x20") _,
-        );
-    }
+/// `stack_top` must be the top of a writable, 16-byte aligned region large enough for the entry.
+pub unsafe fn run(entry: Entry, stack_top: usize) -> u64 {
+    // SAFETY: the caller guarantees the stack; the assembly function is the switch.
+    unsafe { morph_task_start(entry as usize, stack_top) }
+}
+
+/// Return to the Core from a faulted task.
+///
+/// # Safety
+/// Only valid while a task launched by `run` is executing, with a resume target that never returns.
+pub unsafe fn abort_to_core() -> ! {
+    // SAFETY: as above.
+    unsafe { morph_task_abort() }
 }
