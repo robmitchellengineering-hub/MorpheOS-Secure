@@ -248,6 +248,36 @@ pub extern "C" fn kmain() -> ! {
         uart.write_line("TICK: FAIL the deadline missed by more than 3x — real-time budget not met");
     }
 
+    // ---- M5b: the timer's comparator. Arm it for 1 ms, and watch it fire — polled, so this half of a tick does not
+    // need the GIC. ----
+    clock::arm_in(clock::ticks_for_ms(1));
+    let arm_start = clock::now();
+    let mut fired = false;
+    while !clock::fired() {
+        if clock::ns_between(arm_start, clock::now()) > 50_000_000 {
+            break;
+        }
+        core::hint::spin_loop();
+    }
+    if clock::fired() {
+        fired = true;
+    }
+    let fired_ns = clock::ns_between(arm_start, clock::now());
+    clock::disarm();
+    if fired {
+        uart.write_str("TICK: the EL1 timer fired, 0x");
+        uart.write_hex(fired_ns);
+        uart.write_line(" ns after it was armed (comparator status read from CNTP_CTL_EL0)");
+        // Armed for 1 ms: firing before 1 ms would be wrong, and firing after 50 ms means it was not this timer.
+        if fired_ns >= 900_000 && fired_ns <= 5_000_000 {
+            uart.write_line("TICK: the timer fired when it was told to (within 5x of 1 ms)");
+        } else {
+            uart.write_line("TICK: FAIL the timer fired at the wrong time");
+        }
+    } else {
+        uart.write_line("TICK: FAIL the timer never fired within 50 ms");
+    }
+
     // ---- M2: the ledger. ----
     let mut machine = Ledger::empty();
     ledger::report(&uart, &mut machine);

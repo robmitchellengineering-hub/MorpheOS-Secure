@@ -49,6 +49,39 @@ pub fn ns_between(start: u64, end: u64) -> u64 {
     (end.saturating_sub(start)) * 1_000_000_000 / freq
 }
 
+/// Arm the EL1 physical timer to fire once, `ticks` from now. Polled only: this proves the comparator fires, which is
+/// the half of a tick that has nothing to do with the GIC.
+pub fn arm_in(ticks: u64) {
+    let tval = if cfg!(feature = "tick-mutant-armed-far") {
+        // The mutation: arm far enough out that the deadline cannot arrive inside the test. CNTP_TVAL_EL0 is 32-BIT —
+        // measured: `1 << 60` truncated to zero and the timer fired immediately, so the mutation proved nothing and
+        // the self-test failed. 0x7FFF_FFFF is ~34 s at 62.5 MHz, which is far beyond the poll window and fits.
+        0x7fff_ffffu64
+    } else {
+        ticks
+    };
+    // SAFETY: CNTP_TVAL_EL0 and CNTP_CTL_EL0 are the EL1 physical timer's own registers.
+    unsafe {
+        asm!("msr cntp_tval_el0, {0}", in(reg) tval, options(nostack));
+        asm!("msr cntp_ctl_el0, {0}", in(reg) 1u64, options(nostack)); // ENABLE=1, IMASK=0
+        asm!("isb", options(nostack));
+    }
+}
+
+/// Has the armed timer fired? Reads the comparator's own status, not a flag this code maintains.
+pub fn fired() -> bool {
+    let ctl: u64;
+    // SAFETY: CNTP_CTL_EL0 bit 2 is ISTATUS, read-only, set when the timer has fired.
+    unsafe { asm!("mrs {0}, cntp_ctl_el0", out(reg) ctl, options(nostack)) };
+    ctl & 0b100 != 0
+}
+
+/// Disarm the timer, so it cannot keep pending.
+pub fn disarm() {
+    // SAFETY: writing 0 to CNTP_CTL_EL0 clears ENABLE.
+    unsafe { asm!("msr cntp_ctl_el0, {0}", in(reg) 0u64, options(nostack)) };
+}
+
 /// Spin until `deadline`. Returns the counter reading when it was reached.
 pub fn wait_until(deadline: u64) -> u64 {
     loop {
