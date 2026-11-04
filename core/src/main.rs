@@ -140,6 +140,7 @@ fn task_entry() -> u64 {
     let mut buffer = [0u8; 2048];
     // Record where this frame actually is, so the Core can judge it rather than trust the narrative.
     unsafe { task::TASK_STACK_SEEN = core::ptr::addr_of!(buffer) as usize };
+    unsafe { task::TASK_RESULT = u64::from(buffer[0]) + u64::from(buffer[2047]) };
     buffer[0] = 0xA5;
     buffer[2047] = 0x5A;
     let uart = Uart::at(UART_QEMU_VIRT);
@@ -220,10 +221,20 @@ pub extern "C" fn kmain() -> ! {
     uart.write_hex(stack_for_task as u64);
     uart.write_line("");
     // SAFETY: the stack is a static 16 KiB region (or, under the mutation, deliberately the wrong one).
-    let value = unsafe { task::run(task_entry, stack_for_task) };
+    unsafe { task::run(task_entry, stack_for_task) };
+    let value = unsafe { task::TASK_RESULT };
     // The task returns buffer[0] + buffer[2047] = 0xA5 + 0x5A, so a correct return is exactly 0xFF.
     // The judgement: where did the task's stack ACTUALLY sit, compared with the region the Core handed it?
     let seen = unsafe { task::TASK_STACK_SEEN };
+    uart.write_str("M4a: task frame at 0x");
+    uart.write_hex(seen as u64);
+    uart.write_str(", region 0x");
+    uart.write_hex(task_bottom as u64);
+    uart.write_str("..0x");
+    uart.write_hex(task_stack_top as u64);
+    uart.write_str(", returned 0x");
+    uart.write_hex(value);
+    uart.write_line("");
     if seen >= task_bottom && seen < task_stack_top && value == 0xFF {
         uart.write_line("M4a: the task ran on its own stack and returned to the Core");
     } else {

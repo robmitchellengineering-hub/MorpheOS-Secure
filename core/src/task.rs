@@ -24,6 +24,11 @@ pub static mut TASK_STACK: Stack = Stack([0; 16 * 1024]);
 /// handed over — that comparison is what makes the "own stack" claim checkable rather than asserted.
 pub static mut TASK_STACK_SEEN: usize = 0;
 
+/// What the task returned. Passed through a static rather than an asm output: measured, the `lateout("x0")` capture
+/// disagreed with the value the task actually produced, and a switch that also has to marshal its result through a
+/// register constraint is a switch with two ways to be wrong. The task writes it; the Core reads it.
+pub static mut TASK_RESULT: u64 = 0;
+
 /// The task stack region as (bottom, top), so a caller can check an address is inside it.
 pub fn region() -> (usize, usize) {
     let bottom = core::ptr::addr_of!(TASK_STACK) as usize;
@@ -43,8 +48,8 @@ pub type Entry = fn() -> u64;
 /// # Safety
 /// `stack_top` must be the top of a writable, 16-byte aligned region at least as large as the entry's stack use, and
 /// the entry must not return into the Core's stack.
-pub unsafe fn run(entry: Entry, stack_top: usize) -> u64 {
-    let mut result: u64;
+pub unsafe fn run(entry: Entry, stack_top: usize) {
+    // SAFETY note is on the function; the result arrives through TASK_RESULT.
     // SAFETY: the caller guarantees the stack. x20 holds the Core's sp (x19 is reserved by LLVM and cannot be an asm operand) across the call.
     unsafe {
         core::arch::asm!(
@@ -55,8 +60,6 @@ pub unsafe fn run(entry: Entry, stack_top: usize) -> u64 {
             stack = in(reg) stack_top,
             entry = in(reg) entry as usize,
             out("x20") _,
-            lateout("x0") result,
         );
     }
-    result
 }
