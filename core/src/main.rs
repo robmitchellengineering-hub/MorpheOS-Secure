@@ -410,6 +410,37 @@ pub extern "C" fn kmain() -> ! {
         line.flush(&uart);
     }
 
+    // ---- M7c: a capability may NARROW and never widen. The Core does not apply a policy here; it performs a
+    // derivation only when the wanted rights are a subset of the held ones. ----
+    {
+        let mut table = CapTable::empty();
+        let full = table.grant_with(ObjectId(7), cap::Rights::READ.union(cap::Rights::WRITE));
+        match cap::derive(full, cap::Rights::READ) {
+            Ok(c) => {
+                let mut l = uart::LineBuf::new();
+                l.push_str("CAP: derived rights ");
+                l.push_hex(c.rights.0 as u64);
+                l.push_str(" from ");
+                l.push_hex(full.rights.0 as u64);
+                l.push_str(" — narrower, allowed");
+                l.flush(&uart);
+            }
+            Err(_) => uart.write_line("CAP: FAIL a narrower derivation was refused"),
+        }
+        let wanted = cap::Rights::WRITE.union(cap::Rights::GRANT);
+        match cap::derive(full, wanted) {
+            Err(w) => {
+                let mut l = uart::LineBuf::new();
+                l.push_str("CAP: REFUSED widening to ");
+                l.push_hex(w.wanted.0 as u64);
+                l.push_str(" — held only ");
+                l.push_hex(w.held.0 as u64);
+                l.flush(&uart);
+            }
+            Ok(_) => uart.write_line("CAP: FAIL a derivation widened the rights"),
+        }
+    }
+
     // ---- M5c, policy half: two tasks, and the Core choosing between them. No assembly, no switch: this is the
     // decision, measured on its own so that the mechanism cannot hide a policy bug or the reverse. ----
     let mut scheduler = sched::Scheduler::new();
