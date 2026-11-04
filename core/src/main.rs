@@ -119,6 +119,12 @@ _start:
 
     /* Interrupts off until the GIC is ready; FP/SIMD on, because the compiler emits it for ordinary copies. */
     msr daifset, #0xf
+
+    /* Run on SP_EL1 explicitly. The IRQ vector entry (entry 5) stacks on SP_ELx, so if the main code were running on
+     * SP_EL0 the interrupt would push to whatever SP_EL1 happens to be — zero at reset — and fault immediately. That
+     * is exactly the symptom: unmask, and the boot never prints the next line. */
+    msr spsel, #1
+
     mrs x0, cpacr_el1
     orr x0, x0, #(3 << 20)
     msr cpacr_el1, x0
