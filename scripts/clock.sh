@@ -52,8 +52,8 @@ if [ "$MODE" = "--self-test" ]; then
 fi
 
 missing=""
-grep -qE "^TICK: CNTFRQ_EL0 = 0x0*[1-9a-f]" "$LOG" || missing="$missing
-  - a non-zero CNTFRQ_EL0"
+grep -qF "TICK: the frequency is non-zero, as a clock needs it to be" "$LOG" || missing="$missing
+  - a non-zero CNTFRQ_EL0 (stated by the Core)"
 grep -qF "TICK: the counter advances" "$LOG" || missing="$missing
   - the counter advancing"
 grep -qF "TICK: the deadline was honoured in real time (within 3 ms of a 1 ms target)" "$LOG" || missing="$missing

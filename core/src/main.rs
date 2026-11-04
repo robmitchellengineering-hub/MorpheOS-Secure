@@ -202,6 +202,13 @@ pub extern "C" fn kmain() -> ! {
     uart.write_str("TICK: CNTFRQ_EL0 = 0x");
     uart.write_hex(freq);
     uart.write_line(" Hz (from the hardware, not from a table)");
+    // The Core states this itself rather than leaving a gate to guess at a hex string. Measured: two rounds were lost
+    // to a regex over a zero-padded value, which is a gate problem pretending to be a clock problem.
+    if freq != 0 {
+        uart.write_line("TICK: the frequency is non-zero, as a clock needs it to be");
+    } else {
+        uart.write_line("TICK: FAIL the hardware reported no frequency");
+    }
     let start = clock::now();
     // A known workload, so the advance is measured rather than asserted.
     let mut spin: u64 = 0;
