@@ -237,8 +237,20 @@ pub extern "C" fn kmain() -> ! {
     uart.write_hex(stack_for_task as u64);
     uart.write_line("");
     // SAFETY: the stack is a static 16 KiB region (or, under the mutation, deliberately the wrong one).
-    unsafe { task::run(task_entry, stack_for_task) };
-    let value = unsafe { task::TASK_RESULT };
+    let returned = unsafe { task::run(task_entry, stack_for_task) };
+    let recorded = unsafe { task::TASK_RESULT };
+    // Two sources must agree: what the switch returned and what the task recorded. Disagreement is a bug in the
+    // switch, and it is exactly the class of bug that took three attempts to get out of.
+    let value = if returned == recorded {
+        returned
+    } else {
+        uart.write_str("M4a: FAIL the switch returned 0x");
+        uart.write_hex(returned);
+        uart.write_str(" but the task recorded 0x");
+        uart.write_hex(recorded);
+        uart.write_line("");
+        0
+    };
     // The task returns buffer[0] + buffer[2047] = 0xA5 + 0x5A, so a correct return is exactly 0xFF.
     // The judgement: where did the task's stack ACTUALLY sit, compared with the region the Core handed it?
     let seen = unsafe { task::TASK_STACK_SEEN };
