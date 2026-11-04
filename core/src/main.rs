@@ -300,9 +300,14 @@ fn task_a_entry(uart: &Uart) -> ! {
         spins += 1;
         core::hint::spin_loop();
     }
-    uart.write_str("TASK A: ran 0x");
-    uart.write_hex(spins);
-    uart.write_line(" iterations — and it was interrupted along the way");
+    // Through the buffer, so the line cannot be spliced by the other task printing at the same moment.
+    {
+        let mut line = uart::LineBuf::new();
+        line.push_str("TASK A: ran ");
+        line.push_u64(spins);
+        line.push_str(" iterations — and it was interrupted along the way");
+        line.flush(uart);
+    }
     loop {
         // SAFETY: task A is done.
         unsafe { core::arch::asm!("wfe", options(nomem, nostack)) };
@@ -319,9 +324,13 @@ pub extern "C" fn task_second_entry() {
         spins += 1;
         core::hint::spin_loop();
     }
-    uart.write_str("TASK B: ran 0x");
-    uart.write_hex(spins);
-    uart.write_line(" iterations on its own stack — the switch reached it");
+    {
+        let mut line = uart::LineBuf::new();
+        line.push_str("TASK B: ran ");
+        line.push_u64(spins);
+        line.push_str(" iterations on its own stack — the switch reached it");
+        line.flush(&uart);
+    }
     loop {
         // SAFETY: a task with nothing to do waits.
         unsafe { core::arch::asm!("wfe", options(nomem, nostack)) };
