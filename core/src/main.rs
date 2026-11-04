@@ -1,91 +1,79 @@
-//! The Core of MorpheOS Secure — rung M0.
+//! The Core of MorpheOS Secure — rung M0, on the architecture it is actually for.
 //!
-//! WHAT THIS IS, AND WHAT IT IS NOT. This is the first thing in this repository that runs. It has no Linux under
-//! it, no syscalls, no processes and no filesystem: it is a bare-metal program the machine loads and runs, and its
-//! whole job on this rung is to reach userspace-with-nothing-below-it and **say what the machine is**.
+//! The target is a **Raspberry Pi 5**: AArch64, Cortex-A76. That is why there is no real-mode stub, no multiboot
+//! header and no long-mode switch here — those are x86 rituals and the Pi has none of them. The firmware (or EDK2
+//! UEFI) hands the CPU an AArch64 image at EL1/EL2 with the MMU off, and the Core takes it from there.
 //!
-//! The falsifier is the point: `scripts/m0.sh` boots this in QEMU and fails unless the exact line below appears on
-//! the serial port — and it also boots a build whose line is deliberately wrong, to prove the check can fail.
+//! M0's claim is small and testable: **the Core runs on AArch64 and says what it is**, with no Linux or any other
+//! operating system underneath. The falsifier is `scripts/m0.sh`: it boots this image on QEMU's `virt` machine — the
+//! same architecture as the Pi, so the code is the Pi's code — and requires the exact banner on the serial line,
+//! after first booting a deliberately wrong banner to prove the check can fail.
 //!
-//! WHAT IS NOT OURS YET, stated rather than implied: on M0 the loader is QEMU's multiboot loader. Writing our own
-//! loader (`morph-loader`) is rung M0b, with its own falsifier, because a loader with no Core to load would be a
-//! solution to the wrong problem first.
+//! NOT DONE HERE, stated rather than implied: no MMU, no GIC, no timers, no per-core bring-up, and no Pi 5 hardware.
+//! QEMU's `virt` gives a UART and RAM; the Pi brings a different UART address, an EEPROM bootloader and real
+//! firmware. This file is the seed of that, not the thing itself.
 
 #![no_std]
 #![no_main]
-// The Core is not allowed to have a kernel-shaped interface. These are refused by construction as rungs land; on M0
-// there is nothing to refuse yet, and saying so here beats pretending the absence of `unsafe` elsewhere.
 #![deny(clippy::undocumented_unsafe_blocks)]
 
-use core::arch::{asm, global_asm};
+use core::arch::global_asm;
 use core::panic::PanicInfo;
 
-/// The line M0 asserts. Kept in one place so the test and the Core cannot disagree.
-pub const BANNER: &str = "MORPHEOS-CORE 0.0.1: the Core is running; no Linux, no syscalls, no processes";
+mod uart;
+use uart::{Uart, UART_QEMU_VIRT};
 
-/// QEMU's `isa-debug-exit` device. Writing here ends the emulator with `(value << 1) | 1`, which is how a bare
-/// program returns a verdict to a test harness without an operating system to return to.
-const QEMU_EXIT_PORT: u16 = 0xf4;
-const QEMU_EXIT_OK: u32 = 0x10;
-const QEMU_EXIT_FAIL: u32 = 0x11;
+/// The line M0 asserts. One place, so the test and the Core cannot disagree.
+pub const BANNER: &str = "MORPHEOS-CORE 0.0.1: the Core is running on aarch64; no Linux, no syscalls, no processes";
+pub const DONE: &str = "MORPHEOS-CORE: reported; halting";
 
-mod serial;
-use serial::Serial;
-
-// The multiboot header, and the entry point. Both must be assembly: the loader looks for a magic number in the
-// first 8 KiB of the image before any Rust exists, and it jumps to a symbol with no stack promised.
+// The entry point, in assembly, because there is no stack until it makes one. QEMU starts us at EL1 in AArch64 with
+// the MMU off; `sp` is not guaranteed to point anywhere useful, so that is the whole of the first instruction's job,
+// and it is the only assembly the Core needs on this rung.
 global_asm!(
     r#"
-    .intel_syntax noprefix
-
-    .section .multiboot, "a"
-    .align 4
-    .long 0x1BADB002          /* magic the loader searches for */
-    .long 0x00000000          /* flags: nothing requested, not even memory info */
-    .long -(0x1BADB002 + 0)   /* checksum */
-
-    .section .text
+    .section .text.entry, "ax"
     .global _start
 _start:
-    /* A loader guarantees nothing about the stack; give ourselves ours from the linker script before any Rust. */
-    lea rsp, [rip + stack_top]
-    call kmain
-1:  hlt
-    jmp 1b
+    /* The stack the linker script reserved. AArch64 requires sp to stay 16-byte aligned whenever it is touched. */
+    adrp x0, stack_top
+    add  x0, x0, :lo12:stack_top
+    mov  sp, x0
+    bl   kmain
+1:  wfe
+    b    1b
 "#
 );
 
 /// The Core's first instruction in Rust.
-///
-/// # Safety
-/// Called once by `_start` with a stack the linker script provided. It never returns.
 #[unsafe(no_mangle)]
 pub extern "C" fn kmain() -> ! {
-    let mut serial = Serial::new();
-    serial.write_line(BANNER);
-    serial.write_line("MORPHEOS-CORE: no capability space yet, no ledger yet — those are rungs M1 and M2");
-    halt(QEMU_EXIT_OK)
-}
+    let uart = Uart::at(UART_QEMU_VIRT);
+    uart.init();
 
-fn halt(code: u32) -> ! {
-    // SAFETY: `QEMU_EXIT_PORT` is the isa-debug-exit device QEMU is told to attach (see scripts/m0.sh). On a
-    // machine without it this writes to an unused port, which is harmless — and there is no other way for a bare
-    // program to report an exit code.
-    unsafe {
-        asm!("out dx, eax", in("dx") QEMU_EXIT_PORT, in("eax") code, options(nomem, nostack, preserves_flags));
-    }
+    uart.write_line(BANNER);
+    uart.write_line("MORPHEOS-CORE: EL1, MMU off, load address 0x40080000 — capability space and ledger are M1 and M2");
+    uart.write_line(DONE);
+
+    // Nothing to return to: no scheduler and no exit device on this architecture. The test harness watches the serial
+    // line for DONE and stops the machine — honest, because on rung M0 halting *is* the end of the story.
     loop {
-        // SAFETY: `hlt` is legal at CPL 0 and this loop has nothing else to do if the exit device is absent.
-        unsafe { asm!("hlt", options(nomem, nostack, preserves_flags)) };
+        // SAFETY: `wfe` at EL1 is always legal; it is the correct way for an idle core to wait.
+        unsafe { core::arch::asm!("wfe", options(nomem, nostack)) };
     }
 }
 
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
-    let mut serial = Serial::new();
-    serial.write_line("MORPHEOS-CORE: PANIC — the Core failed before it could report");
+    let uart = Uart::at(UART_QEMU_VIRT);
+    uart.init();
+    uart.write_line("MORPHEOS-CORE: PANIC — the Core failed before it could report");
     if let Some(location) = info.location() {
-        serial.write_line(location.file());
+        uart.write_str("  at ");
+        uart.write_line(location.file());
     }
-    halt(QEMU_EXIT_FAIL)
+    loop {
+        // SAFETY: as above — a panicked core has nothing to do but wait.
+        unsafe { core::arch::asm!("wfe", options(nomem, nostack)) };
+    }
 }

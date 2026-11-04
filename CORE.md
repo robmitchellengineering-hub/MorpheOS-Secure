@@ -1,6 +1,19 @@
 # CORE — the Core: a capability microkernel, and the only thing in the machine that is trusted
 
-**State: specified, not built. No source, no boot, no capability model. Zero lines of Core code exist.**
+**State: M0 is green.** Measured on `studio-linux2`, 2026-11-04: the Core builds for `aarch64-unknown-none` and
+boots on QEMU `virt` (`-cpu cortex-a76`, the Pi 5's core) with no Linux in the path, writing:
+
+```
+MORPHEOS-CORE 0.0.1: the Core is running on aarch64; no Linux, no syscalls, no processes
+MORPHEOS-CORE: reported; halting
+```
+
+and `scripts/m0.sh --self-test` goes red on a deliberately wrong banner, so the gate is not theatre. **What is not
+done: no capability space (M1), no ledger (M2), no Pi 5 hardware, no MMU, no GIC, no timers.**
+
+**The machine is a Raspberry Pi 5** — AArch64, Cortex-A76. That decides the architecture of everything here: no
+real mode, no multiboot, no long-mode switch; the firmware or EDK2 UEFI hands over an AArch64 image and the Core
+takes it from there. The x86 loader in `loader/` is kept because it was measured, not because it is the path.
 
 This is the scope and the first rung, written so the first line of code has something to be judged against.
 
@@ -36,6 +49,14 @@ over **versioned state**, and the display is a projection of that state.
 - **Never claim a security property the acceptance suite has not attacked.** `acceptance/attacks/` decides.
 - **Never quietly become a driver project.** See hardware, below.
 
+## The workload this machine exists for
+
+**AirMatrix** (`airmatrix-dsh`: `amt-core`, `amt-dsp`, `amt-engine`, `amt-matrix`, `amt-node`, …) is Rust, and it
+needs three things this Core does not have yet: an allocator and tasks (5 crates use `std::thread`), state I/O (5 use
+`std::fs`, 7 use `std::net`), and **64-bit audio plugins** — arbitrary native AArch64 shared libraries, loaded and
+run untrusted on a real-time deadline. [AUDIO-AND-PLUGINS.md](AUDIO-AND-PLUGINS.md) states what that costs and what
+the falsifiers are. It is the reason the capability model and the ledger come before the audio path, not after.
+
 ## Hardware — the cost, stated once
 
 This estate's machines are laptops: Wi-Fi (`b43`, `iwlwifi`), a panel (`i915`, `amdgpu`), audio
@@ -57,12 +78,14 @@ until a driver box exists for them. That is the price of a Core that is its own 
 
 | rung | what we build | it proves | falsifier |
 |---|---|---|---|
-| **M0** | **builds**, and its own check is proven able to fail | the Core is real code that compiles, and the gate is not theatre | the build fails, or `--self-test` passes on a deliberately wrong line |
-| **M0b** | **our loader**: a 32-bit entry that sets up long mode and enters the 64-bit Core, **with two generations, a one-shot trial and a fallback** | the machine boots *our* Core through *our* loader, and cannot be left with a Core that does not come up | the loader does not reach the Core; a corrupted newer generation is not rolled back; a generation that failed health is tried twice |
+| **M0** | **done, measured** — builds for AArch64 and boots on QEMU `virt`, with the check proven able to fail | the Core runs on the Pi's architecture with no OS under it | the build fails, or `--self-test` passes on a deliberately wrong line |
+| **M0b** | **the same image on the Pi 5 through its UEFI** (QEMU half done) | the Core runs on the actual machine | no banner on the Pi's serial line; or a banner without the Core reporting it finished |
+| **M0c** | **our boot path with two generations, a one-shot trial and a fallback** | the machine cannot be left with a Core that does not come up | a corrupted newer generation is not rolled back; a generation that failed health is tried twice |
 | **M1** | capabilities: a task granted one object and refused another, with the refusal coming from the Core | authority is objects, not users | a task reaches an object the kernel did not grant |
 | **M2** | the history: state as signed generations; undo to an earlier generation without a reboot | the machine is its history | an undo loses data, or a tampered generation is accepted |
 | **M3** | the failure path: a hard lockup leaves Core-written evidence, and a bad generation is not descended from | the machine explains itself without userspace | no evidence after a lockup, or a bad generation boots again |
 | **M4** | the seal: measured boot, and a statement of what was booted that a verifier accepts | the machine can prove itself | a tampered build produces a statement that verifies |
+| **M6** | the box: a foreign AArch64 ELF64 plugin loads, runs untrusted, processes a buffer, and cannot leave its box | the machine runs the workload it exists for, safely | the plugin reaches a file, a socket or another task's memory; or a crashing box takes the audio graph with it |
 | **M5** | the first driver box: one real device (a panel), hosted by foreign driver code inside a VM the Core does not trust | hardware without trusting a driver | the driver box reaches memory or a device it was not given |
 
 **M0 is next, and it is small.** One rung at a time; nothing is claimed before its falsifier has been run.

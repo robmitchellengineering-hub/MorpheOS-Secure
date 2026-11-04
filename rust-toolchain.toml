@@ -1,6 +1,7 @@
-# One exact toolchain, the same one the rest of the estate uses, plus the bare-metal target the Core builds for.
+# The estate's exact toolchain, plus both bare-metal targets: aarch64 is the real one (Raspberry Pi 5), x86_64 is
+# the bring-up path kept for the loader work already done.
 [toolchain]
 channel = "1.99.0"
 components = ["rustfmt", "clippy"]
-targets = ["x86_64-unknown-none"]
+targets = ["aarch64-unknown-none", "x86_64-unknown-none"]
 profile = "minimal"

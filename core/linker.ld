@@ -1,17 +1,18 @@
-/* The Core's own memory layout. Nothing about this comes from a distribution: it is a linker script we wrote,
- * and the only thing it guarantees on rung M0 is that the multiboot header lands in the first 8 KiB of the image
- * (the loader looks there and nowhere else) and that the stack has somewhere real to live. */
+/* The Core's memory layout. Loaded at 2 MiB by `morph-loader`, which is why the first byte of the image is the
+ * Core's entry point: the loader copies the blob to exactly this address and jumps to it, knowing nothing else.
+ *
+ * Nothing about this comes from a distribution, a firmware vendor or a boot manager. */
 
 ENTRY(_start)
 
 SECTIONS
 {
-    /* Multiboot loads us at 1 MiB. Below that is firmware and video memory. */
-    . = 1M;
+    . = 2M;
 
-    .multiboot : ALIGN(4)
+    /* First in the image, so that the flat binary begins with the entry point the loader jumps to. */
+    .text.entry : ALIGN(16)
     {
-        KEEP(*(.multiboot))
+        KEEP(*(.text.entry))
     }
 
     .text : ALIGN(4K)
@@ -35,8 +36,7 @@ SECTIONS
         *(.bss .bss.*)
     }
 
-    /* The stack the Core switches to before it runs any Rust. 64 KiB is arbitrary and generous; M0 presses no
-     * button on it. */
+    /* The stack the Core's first instruction switches to. 64 KiB is generous and M0b presses no button on it. */
     .bss.stack : ALIGN(16)
     {
         stack_bottom = .;

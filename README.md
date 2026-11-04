@@ -36,6 +36,13 @@ What *does* exist, and is carried here, is everything a secure Core has to satis
   an isolated VM** — a compatibility device the Core does not trust — and [CORE.md](CORE.md) says so in
   those words rather than implying it.
 
+## What it is for, first
+
+**Run all the AirMatrix software on a machine that cannot be talked into betraying it** — `airmatrix-dsh` (Rust room
+acoustics, DSP and measurement) and its **64-bit audio plugins** (foreign AArch64 shared libraries, untrusted, on a
+real-time deadline). The first hardware is a **Raspberry Pi 5**, because it is AArch64, cheap, and honest about its
+firmware. [AUDIO-AND-PLUGINS.md](AUDIO-AND-PLUGINS.md) is the scope of the plugin work.
+
 ## The wedge, in the boot path
 
 **Never breaks, and heals itself** is not a feature of this OS; it is the first thing the loader does. Two generations
