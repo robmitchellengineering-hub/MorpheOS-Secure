@@ -79,3 +79,33 @@ cache line arrive sooner. A proof makes a *decision* cheap or a *check* unnecess
 
 **Order**: M7a → M7b → M7c → M7d, and M7a comes **before** the network rung, because it is the property that makes a
 show's "never drops" a measurement-free claim — the thing this OS can say that a Linux-based system cannot.
+
+---
+
+## STATE, 2026-11-04 — M7a, M7c and M7d are DONE and measured
+
+**M7a — the schedulability certificate.** `core/src/cert.rs`. `Σ(Cᵢ/Tᵢ) ≤ 1` decided by cross-multiplication
+(`D = Π Tⱼ`, `S = Σ Cᵢ·(D/Tᵢ)`, claim `S ≤ D`) — integers throughout, no floating point. At most three terms,
+each below 2³², so `D ≤ 2⁹⁶` inside `u128`; **a certificate outside the bound is refused, not computed**, because a
+witness a hostile party can make expensive is a denial-of-service primitive.
+
+- `ledger::apply_certified` checks first and appends only if the arithmetic holds: **a generation that cannot prove
+  it fits never becomes history** (measured: head `0 -> 0` after the refusal).
+- Falsifiers, all green in `scripts/cert.sh`: a fitting graph admitted at 350000 ppm; the same graph with `engine`'s
+  cost raised is REFUSED and `engine` is named; a lying certificate REFUSED with both values printed; **the check
+  allocated nothing** (the allocator's counter is read before and after, so the bound is measured, not promised).
+  Mutation `cert-mutant-skip-check` admits both bad certificates, so the refusals are the arithmetic's.
+
+**M7c — a capability may narrow and never widen.** `core/src/cap.rs`. `Rights` is three bits; `derive()` performs only
+when the wanted rights are a **subset** of the held ones. Widening is not a policy the Core applies — it is an
+operation that does not exist. `scripts/cap.sh` measures both directions; `cap-mutant-widen` makes it exist.
+
+**M7d — a box validated once at load.** `core/src/box_admission.rs`. A box states where its code lives and the highest
+address it will touch; the Core checks that claim **once**, and if it holds the box runs without a mask or bound check
+per access — the 5–30% a sandbox otherwise costs. `box-mutant-trust-claim` admits the liar.
+**Honest scope:** this is the ADMISSION SHAPE, not an ELF verifier; proving the claim of real machine code is M7d's
+remaining work.
+
+**M7b — still open.** The bounded check is bounded *by construction* (three terms, 2³², `u128`) and the bound is
+measured by the allocator counter. What is NOT done is the Lean side: the criterion is the EDF utilisation theorem, and
+this repository checks it rather than proving it. Do not describe the check as proved.
