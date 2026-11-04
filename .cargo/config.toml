@@ -1,0 +1,15 @@
+[build]
+target = "x86_64-unknown-none"
+
+[target.x86_64-unknown-none]
+# A Core is not a program: no start files, no default linker script, no PIE. The linker script is ours and lives
+# beside the crate it lays out.
+rustflags = [
+    "-C", "link-arg=-nostartfiles",
+    "-C", "link-arg=-Tcore/linker.ld",
+    "-C", "link-arg=-static",
+    "-C", "link-arg=-no-pie",
+    "-C", "relocation-model=static",
+    "-C", "panic=abort",
+]
+runner = "false"

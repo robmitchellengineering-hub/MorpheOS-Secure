@@ -1,0 +1,13 @@
+[package]
+name = "morph-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "The Core of MorpheOS Secure: a capability microkernel. Rung M0: it runs, and says so."
+
+[[bin]]
+name = "morph-core"
+path = "src/main.rs"
+
+# No dependencies. A Core that pulls a crate graph on its first rung has already stopped being auditable.
+[dependencies]

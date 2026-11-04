@@ -1,0 +1,6 @@
+# One exact toolchain, the same one the rest of the estate uses, plus the bare-metal target the Core builds for.
+[toolchain]
+channel = "1.99.0"
+components = ["rustfmt", "clippy"]
+targets = ["x86_64-unknown-none"]
+profile = "minimal"

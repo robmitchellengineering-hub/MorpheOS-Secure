@@ -1,0 +1,51 @@
+name: core
+
+# The Core's own gate. It builds morph-core for bare metal and boots it in QEMU, because M0's claim is that there is
+# no operating system underneath — a host unit test cannot make that claim, and a check that has never failed is not
+# a check. `--self-test` runs first: the same boot with a deliberately wrong banner must go red.
+
+on:
+  push:
+    paths: ['core/**', 'scripts/m0.sh', '.cargo/**', 'Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml', '.github/workflows/core.yml']
+  pull_request:
+    paths: ['core/**', 'scripts/m0.sh', '.cargo/**', 'Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml', '.github/workflows/core.yml']
+  workflow_dispatch:
+
+# One run per branch. The lesson from the MorpheOS kernel work: a long gate cancelled by the pusher waiting on it
+# teaches nothing (HM26 in the mesh ledger).
+concurrency:
+  group: core-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  m0:
+    name: M0 — the Core boots and reports itself
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: The pinned toolchain and the bare-metal target
+        run: |
+          rustup show                     # reads rust-toolchain.toml and installs exactly 1.99.0 + its targets
+          rustup target add x86_64-unknown-none || true
+          rustc --version
+
+      - name: QEMU
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq qemu-system-x86
+
+      - name: The check can fail (the mutation)
+        run: bash scripts/m0.sh --self-test
+
+      - name: M0 — the Core boots and reports itself
+        run: bash scripts/m0.sh
+
+      - name: Keep the serial log either way
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: m0-serial-log
+          path: target/m0/serial.log
+          if-no-files-found: warn
