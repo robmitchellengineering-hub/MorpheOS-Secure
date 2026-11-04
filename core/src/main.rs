@@ -690,6 +690,11 @@ pub extern "C" fn kmain() -> ! {
     uart.write_line(DONE);
 
     boot_epilogue(&uart);
+    // The epilogue returns when preemption is not built in; kmain never does.
+    loop {
+        // SAFETY: nothing left to return to.
+        unsafe { core::arch::asm!("wfe", options(nomem, nostack)) };
+    }
 
     }
     loop {
