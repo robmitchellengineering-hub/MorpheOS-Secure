@@ -50,11 +50,44 @@ _start:
     adrp x0, stack_top
     add  x0, x0, :lo12:stack_top
     mov  sp, x0
+
+    /* Interrupts off. On this rung nothing should raise one, and an unexpected one must not become a silent halt. */
+    msr daifset, #0xf
+
+    /* A vector table, so a fault says WHAT faulted instead of leaving a machine that stopped with no words. Measured
+     * need: the Core died silently after the M1 verdict, which could be a hang or a fault and there was no way to
+     * tell them apart. VBAR_EL1 must be 2 KiB aligned. */
+    adrp x0, vectors
+    add  x0, x0, :lo12:vectors
+    msr vbar_el1, x0
+
     bl   kmain
 1:  wfe
     b    1b
+
+    .balign 2048
+vectors:
+    .rept 16
+    .balign 128
+    mov x0, #0
+    b   exc_report
+    .endr
 "#
 );
+
+/// The Core's own failure path, for now: name the fault and stop. Every vector currently reports vector 0; on the next
+/// rung the entries carry their index and the syndrome registers are decoded (M3's job). Naming the fault at all is
+/// what changes a silent halt into a diagnosis.
+#[unsafe(no_mangle)]
+pub extern "C" fn exc_report(_vector: u64) -> ! {
+    let uart = Uart::at(UART_QEMU_VIRT);
+    uart.init();
+    uart.write_line("MORPHEOS-CORE: EXCEPTION — the Core faulted, and this is it reporting rather than stopping");
+    loop {
+        // SAFETY: nothing else to do after a fault on this rung.
+        unsafe { core::arch::asm!("wfe", options(nomem, nostack)) };
+    }
+}
 
 /// The Core's first instruction in Rust.
 #[unsafe(no_mangle)]
