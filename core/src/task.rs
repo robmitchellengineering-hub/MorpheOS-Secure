@@ -57,6 +57,8 @@ unsafe extern "C" {
     fn morph_task_abort() -> !;
 }
 
+use core::arch::global_asm;
+
 global_asm!(
     r#"
     .section .text.task, "ax"
