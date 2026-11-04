@@ -49,3 +49,5 @@ sched-mutant-ignore-priority = []
 cert-mutant-skip-check = []
 # M7c's mutation: allow a derivation to widen, the one thing authority must never do.
 cap-mutant-widen = []
+# M7d's mutation: trust a box's claim without checking it, the exact mistake admission exists to forbid.
+box-mutant-trust-claim = []

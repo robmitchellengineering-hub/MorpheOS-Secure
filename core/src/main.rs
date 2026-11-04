@@ -24,6 +24,7 @@ extern crate alloc;
 
 #[path = "alloc.rs"]
 mod heap;
+mod box_admission;
 mod cap;
 mod cert;
 mod clock;
@@ -408,6 +409,51 @@ pub extern "C" fn kmain() -> ! {
         line.push_str(" tasks expected, counter at ");
         line.push_hex(0x2a);
         line.flush(&uart);
+    }
+
+    // ---- M7d: a box is validated ONCE at load. If its claim holds, it runs without a mask per access — which is the
+    // 5–30% a sandbox otherwise costs, and the difference between this OS and a masked container at a 1 ms deadline. ----
+    {
+        let honest = box_admission::BoxRequest {
+            name: "vst-box",
+            code_start: 0x1000,
+            code_len: 0x2000,
+            limit: 0x4000,
+            claim: box_admission::Claim { highest_address: 0x3800, signer: "vendor-signature" },
+        };
+        match box_admission::admit(&honest) {
+            Ok(a) => {
+                let mut l = uart::LineBuf::new();
+                l.push_str("BOX: admitted ");
+                l.push_str(a.name);
+                l.push_str(" — claim checked once against limit ");
+                l.push_hex(a.checked_against);
+                l.push_str(", no per-access mask needed");
+                l.flush(&uart);
+            }
+            Err(_) => uart.write_line("BOX: FAIL an honest box was refused"),
+        }
+        let lying = box_admission::BoxRequest {
+            name: "lying-box",
+            code_start: 0x1000,
+            code_len: 0x2000,
+            limit: 0x4000,
+            claim: box_admission::Claim { highest_address: 0x9fff, signer: "vendor-signature" },
+        };
+        match box_admission::admit(&lying) {
+            Err(box_admission::Refused::ClaimOutside { claimed, limit, signer }) => {
+                let mut l = uart::LineBuf::new();
+                l.push_str("BOX: REFUSED a claim of ");
+                l.push_hex(claimed);
+                l.push_str(" against limit ");
+                l.push_hex(limit);
+                l.push_str(" signed ");
+                l.push_str(signer);
+                l.push_str(" — refused at LOAD, not at an access");
+                l.flush(&uart);
+            }
+            _ => uart.write_line("BOX: FAIL a box that claimed memory it was not granted was admitted"),
+        }
     }
 
     // ---- M7c: a capability may NARROW and never widen. The Core does not apply a policy here; it performs a
