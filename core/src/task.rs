@@ -29,6 +29,13 @@ pub static mut TASK_STACK_SEEN: usize = 0;
 /// register constraint is a switch with two ways to be wrong. The task writes it; the Core reads it.
 pub static mut TASK_RESULT: u64 = 0;
 
+/// Where the Core was, and where it resumes, if a task has to be aborted. `run` writes these before the switch; the
+/// fault handler uses them to return to the label just after the task call. That is what makes an abort an abort
+/// rather than a halt: the Core's stack and return address are handed back, and the boot continues.
+pub static mut CORE_SP: usize = 0;
+pub static mut CORE_LR: usize = 0;
+pub static mut ABORT_PC: usize = 0;
+
 /// The task stack region as (bottom, top), so a caller can check an address is inside it.
 pub fn region() -> (usize, usize) {
     let bottom = core::ptr::addr_of!(TASK_STACK) as usize;
