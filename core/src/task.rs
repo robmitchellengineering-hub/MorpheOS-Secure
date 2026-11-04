@@ -40,7 +40,7 @@ pub unsafe fn run(entry: Entry, stack_top: usize) -> u64 {
         core::arch::asm!(
             "mov x20, sp",
             "mov sp, {stack}",
-            "bl {entry}",
+            "blr {entry}",
             "mov sp, x20",
             stack = in(reg) stack_top,
             entry = in(reg) entry as usize,
