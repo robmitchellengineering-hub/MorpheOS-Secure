@@ -234,7 +234,9 @@ irq_entry:
     bl  irq_switch
     mov sp, x0
 
-    RESTORE_ALL
+    /* WITH STATE: the frame may belong to the OTHER task, so the resume address and PSTATE come from it too. This is
+     * the only place that may use this macro - the fault path must keep RESTORE_ALL. */
+    RESTORE_ALL_WITH_STATE
     eret
 
     "#
@@ -275,11 +277,36 @@ pub extern "C" fn irq_switch(sp: usize) -> usize {
     sched::on_irq(sp)
 }
 
+/// The first task: it counts until it is done and then says so. It never yields — the only way it loses the CPU is
+/// the timer taking it, which is the whole point.
+fn task_a_entry(uart: &Uart) -> ! {
+    let mut spins: u64 = 0;
+    while spins < 200_000 {
+        spins += 1;
+        core::hint::spin_loop();
+    }
+    uart.write_str("TASK A: ran 0x");
+    uart.write_hex(spins);
+    uart.write_line(" iterations — and it was interrupted along the way");
+    loop {
+        // SAFETY: task A is done.
+        unsafe { core::arch::asm!("wfe", options(nomem, nostack)) };
+    }
+}
+
 /// The second task's entry: it prints once and halts, which is enough to prove it was ever run.
 #[unsafe(no_mangle)]
 pub extern "C" fn task_second_entry() {
     let uart = Uart::at(UART_QEMU_VIRT);
-    uart.write_line("TASK B: running on its own stack — the switch reached it");
+    let mut spins: u64 = 0;
+    // Count first, so "it ran" is arithmetic and not a claim: the CPU had to be here for this loop to execute.
+    while spins < 5_000 {
+        spins += 1;
+        core::hint::spin_loop();
+    }
+    uart.write_str("TASK B: ran 0x");
+    uart.write_hex(spins);
+    uart.write_line(" iterations on its own stack — the switch reached it");
     loop {
         // SAFETY: a task with nothing to do waits.
         unsafe { core::arch::asm!("wfe", options(nomem, nostack)) };
@@ -464,6 +491,27 @@ pub extern "C" fn kmain() -> ! {
         uart.write_hex(arrived);
         uart.write_line(" timer interrupts arrived in 50 ms — the interrupt path is not working");
     }
+
+    // ---- M5c part four: preemption. Two contexts, one CPU, and the timer choosing between them. ----
+    let second_top = {
+        let base = core::ptr::addr_of!(sched::TASK_B_STACK) as usize;
+        base + core::mem::size_of::<sched::TaskStack>()
+    };
+    let second_frame = sched::install_frame(second_top, task_second_entry as usize);
+    sched::install_second(second_frame);
+    let (elr, spsr) = sched::frame_state(second_frame);
+    uart.write_str("PREEMPT: second task frame at 0x");
+    uart.write_hex(second_frame as u64);
+    uart.write_str(", resumes at 0x");
+    uart.write_hex(elr);
+    uart.write_str(" in PSTATE 0x");
+    uart.write_hex(spsr);
+    uart.write_line("");
+    // The boot's own frame is recorded by the first interrupt, so nothing to do here but turn it on.
+    sched::enable_switching();
+    uart.write_line("PREEMPT: switching enabled — the next timer interrupt may move the CPU");
+    // From here this context IS task A. It never returns; the timer is the only thing that takes the CPU away.
+    task_a_entry(&uart);
 
     // ---- M2: the ledger. ----
     let mut machine = Ledger::empty();
