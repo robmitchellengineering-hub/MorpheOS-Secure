@@ -271,10 +271,25 @@ fn task_entry() -> u64 {
 pub extern "C" fn irq_switch(sp: usize) -> usize {
     // SAFETY: the vector entry saves and restores every register, and the GIC is initialised before unmask().
     unsafe { gic::handle() };
-    // THE SWITCH, in one call: record the frame that was interrupted and answer with the one to resume from. While
-    // switching is off this returns `sp` unchanged, so every existing gate must produce exactly the same result — and
-    // that is what this commit is measured against.
-    sched::on_irq(sp)
+    // THE SWITCH, in one call: record the frame that was interrupted and answer with the one to resume from.
+    let to = sched::on_irq(sp);
+
+    // Name the first few switches. A bad restore and a task that starts and dies look identical from outside - the
+    // machine simply stops - so the numbers that matter are printed while they are still true.
+    static mut SWITCH_N: u64 = 0;
+    unsafe { SWITCH_N += 1 };
+    let n = unsafe { SWITCH_N };
+    if n <= 5 {
+        let mut line = uart::LineBuf::new();
+        line.push_str("SWITCH ");
+        line.push_u64(n);
+        line.push_str(": from ");
+        line.push_hex(sp as u64);
+        line.push_str(" to ");
+        line.push_hex(to as u64);
+        line.flush(&Uart::at(UART_QEMU_VIRT));
+    }
+    to
 }
 
 /// The first task: it counts until it is done and then says so. It never yields — the only way it loses the CPU is
