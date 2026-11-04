@@ -25,6 +25,7 @@ extern crate alloc;
 #[path = "alloc.rs"]
 mod heap;
 mod cap;
+mod cert;
 mod clock;
 mod gic;
 mod sched;
@@ -460,6 +461,74 @@ pub extern "C" fn kmain() -> ! {
         line.push_byte(*b);
     }
     line.flush(&uart);
+    // ---- M7a: the certificate. Whether a graph fits its deadlines is arithmetic, not measurement: the Core checks
+    // the exact rational inequality Σ(Cᵢ/Tᵢ) ≤ 1 in bounded time, refuses what does not fit, and names the task that
+    // broke the budget. ----
+    {
+        let (used_before, _, _) = ALLOCATOR.stats();
+        let fitting = cert::Certificate {
+            terms: [
+                cert::Term { name: "engine", cost: 200, period: 1000 },
+                cert::Term { name: "control", cost: 100, period: 1000 },
+                cert::Term { name: "meter", cost: 50, period: 1000 },
+            ],
+            len: 3,
+            claimed_ppm: 350_000,
+        };
+        match cert::check(&fitting) {
+            Ok(ppm) => {
+                let mut l = uart::LineBuf::new();
+                l.push_str("CERT: fitting graph admitted — utilisation ");
+                l.push_u64(ppm);
+                l.push_str(" ppm");
+                l.flush(&uart);
+            }
+            Err(_) => uart.write_line("CERT: FAIL a fitting graph was refused"),
+        }
+        let too_big = cert::Certificate {
+            terms: [
+                cert::Term { name: "engine", cost: 900, period: 1000 },
+                cert::Term { name: "control", cost: 100, period: 1000 },
+                cert::Term { name: "meter", cost: 50, period: 1000 },
+            ],
+            len: 3,
+            claimed_ppm: 1_050_000,
+        };
+        match cert::check(&too_big) {
+            Err(cert::Rejected::OverBudget { largest }) => {
+                let mut l = uart::LineBuf::new();
+                l.push_str("CERT: over budget REFUSED — the term that broke it is ");
+                l.push_str(largest);
+                l.flush(&uart);
+            }
+            _ => uart.write_line("CERT: FAIL an over-budget graph was admitted"),
+        }
+        let lying = cert::Certificate { claimed_ppm: 123_456, ..fitting };
+        match cert::check(&lying) {
+            Err(cert::Rejected::Lying { claimed_ppm, actual_ppm }) => {
+                let mut l = uart::LineBuf::new();
+                l.push_str("CERT: lying certificate REFUSED — claimed ");
+                l.push_u64(claimed_ppm);
+                l.push_str(" ppm, arithmetic says ");
+                l.push_u64(actual_ppm);
+                l.flush(&uart);
+            }
+            _ => uart.write_line("CERT: FAIL a certificate that lied was accepted"),
+        }
+        let (used_after, _, _) = ALLOCATOR.stats();
+        let mut l = uart::LineBuf::new();
+        l.push_str("CERT: bounded — allocator use before ");
+        l.push_u64(used_before as u64);
+        l.push_str(" after ");
+        l.push_u64(used_after as u64);
+        l.flush(&uart);
+        if used_before == used_after {
+            uart.write_line("CERT: the check allocated nothing, so a hostile certificate cannot make it expensive");
+        } else {
+            uart.write_line("CERT: FAIL the check allocated");
+        }
+    }
+
     if picks == *b"111111" {
         uart.write_line("PRIORITY: the audio class took every pick — a normal task cannot starve it");
     } else {
