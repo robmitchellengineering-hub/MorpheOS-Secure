@@ -41,6 +41,10 @@ use ledger::Ledger;
 static ALLOCATOR: heap::FirstFit = heap::FirstFit::new();
 use uart::{Uart, UART_QEMU_VIRT};
 
+/// The device tree blob the firmware passed in `x0`, kept so the reader can be asked what the machine actually is.
+#[unsafe(no_mangle)]
+pub static mut DTB_POINTER: usize = 0;
+
 /// The line M0 asserts. One place, so the test and the Core cannot disagree.
 pub const BANNER: &str = "MORPHEOS-CORE 0.0.1: the Core is running on aarch64; no Linux, no syscalls, no processes";
 pub const DONE: &str = "MORPHEOS-CORE: reported; halting";
@@ -151,6 +155,11 @@ _start:
     adrp x0, stack_top
     add  x0, x0, :lo12:stack_top
     mov  sp, x0
+
+    /* The firmware's device tree pointer arrives in x0. Keep it before anything else uses x0. */
+    adrp x1, DTB_POINTER
+    add  x1, x1, :lo12:DTB_POINTER
+    str  x0, [x1]
 
     /* Interrupts off until the GIC is ready; FP/SIMD on, because the compiler emits it for ordinary copies. */
     msr daifset, #0xf
@@ -409,6 +418,42 @@ pub extern "C" fn kmain() -> ! {
         line.push_str(" tasks expected, counter at ");
         line.push_hex(0x2a);
         line.flush(&uart);
+    }
+
+    // ---- M0b preparation: ask the MACHINE, not memory, where its UART and RAM are. On QEMU this must agree with the
+    // constants the earlier rungs used; on the Pi it will replace them. ----
+    {
+        let dtb = unsafe { DTB_POINTER };
+        let mut l = uart::LineBuf::new();
+        l.push_str("FDT: the firmware's device tree is at ");
+        l.push_hex(dtb as u64);
+        l.flush(&uart);
+        match fdt::find_compatible(dtb, "arm,pl011") {
+            Ok(a) => {
+                let mut l = uart::LineBuf::new();
+                l.push_str("FDT: arm,pl011 at ");
+                l.push_hex(a.base);
+                l.push_str(" — and the constant this boot uses is ");
+                l.push_hex(uart::UART_QEMU_VIRT as u64);
+                l.flush(&uart);
+                if a.base == uart::UART_QEMU_VIRT as u64 {
+                    uart.write_line("FDT: the tree AGREES with the constant — on the Pi the tree wins");
+                } else {
+                    uart.write_line("FDT: the tree DISAGREES with the constant — the tree is right");
+                }
+            }
+            Err(_) => uart.write_line("FDT: FAIL no arm,pl011 node was found in the tree"),
+        }
+        match fdt::find_compatible(dtb, "arm,pl011") {
+            Ok(a) if a.size > 0 => {
+                let mut l = uart::LineBuf::new();
+                l.push_str("FDT: the UART's window is ");
+                l.push_u64(a.size);
+                l.push_str(" bytes");
+                l.flush(&uart);
+            }
+            _ => {}
+        }
     }
 
     // ---- M7d: a box is validated ONCE at load. If its claim holds, it runs without a mask per access — which is the

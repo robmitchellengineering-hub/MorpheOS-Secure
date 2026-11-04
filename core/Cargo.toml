@@ -51,3 +51,5 @@ cert-mutant-skip-check = []
 cap-mutant-widen = []
 # M7d's mutation: trust a box's claim without checking it, the exact mistake admission exists to forbid.
 box-mutant-trust-claim = []
+# FDT's mutation: refuse to walk the tree, so the reader's answer is proven to come from the firmware's blob.
+fdt-mutant-skip-walk = []
