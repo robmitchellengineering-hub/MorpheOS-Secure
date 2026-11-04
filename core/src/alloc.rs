@@ -114,7 +114,7 @@ impl FirstFit {
                     // Too small to split: the allocation swallows the remainder, and its recorded size says so.
                     node.size = want + remainder;
                 }
-                node.magic = USED;
+                unsafe { core::ptr::write_volatile(core::ptr::addr_of_mut!((*cursor).magic), USED) };
                 unsafe { (*st).used += 1 };
                 // SAFETY: the payload starts right after the header of a block this function owns.
                 return unsafe { cursor.cast::<u8>().add(HEADER) };
@@ -135,8 +135,9 @@ impl FirstFit {
         }
         // SAFETY: the caller promises the pointer came from this allocator; the header is one HEADER before it.
         let header = unsafe { payload.sub(HEADER).cast::<Header>() };
+        let magic = unsafe { core::ptr::read_volatile(core::ptr::addr_of!((*header).magic)) };
         let node = unsafe { &mut *header };
-        if node.magic != USED {
+        if magic != USED {
             // The mutation: a build that trusts the caller turns this refusal off, and the falsifier's self-test
             // requires the double free to then be ACCEPTED (no refusal line).
             if cfg!(feature = "m2b-mutant-allow-double-free") {
@@ -145,7 +146,7 @@ impl FirstFit {
             unsafe { (*st).double_frees_refused += 1 };
             return false;
         }
-        node.magic = FREE;
+        unsafe { core::ptr::write_volatile(core::ptr::addr_of_mut!((*header).magic), FREE) };
         unsafe { (*st).frees += 1 };
         true
     }
