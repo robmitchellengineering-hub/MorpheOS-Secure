@@ -7,7 +7,7 @@
 //! Polled, 8N1, no interrupts: M0 has one writer and nothing else to do.
 
 use core::ptr::{read_volatile, write_volatile};
-use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicBool, Ordering};
 
 /// Held for the duration of one FLUSH, and nowhere else. Measured: taking a lock inside `write_str` broke composite
 /// output, because `push_hex` re-enters through `write_str`, fails to acquire, and silently drops characters. A buffer
@@ -18,18 +18,6 @@ static CONSOLE: AtomicBool = AtomicBool::new(false);
 pub const UART_QEMU_VIRT: usize = 0x0900_0000;
 /// Raspberry Pi 5: the PL011 on the RP1 south bridge.
 pub const UART_PI5: usize = 0x1F_2201_0000;
-
-/// Where the console actually is. Resolved ONCE at boot from the firmware's device tree when one is passed, and from
-/// the constant otherwise — because a hardcoded address is a memory, and the Pi's memory will be wrong.
-static BASE: AtomicUsize = AtomicUsize::new(UART_QEMU_VIRT);
-
-pub fn base() -> usize {
-    BASE.load(Ordering::Relaxed)
-}
-
-pub fn set_base(address: usize) {
-    BASE.store(address, Ordering::Relaxed);
-}
 
 const DR: usize = 0x00; // data register
 const FR: usize = 0x18; // flag register

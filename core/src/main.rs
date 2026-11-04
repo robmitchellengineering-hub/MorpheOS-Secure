@@ -276,7 +276,7 @@ fn task_entry() -> u64 {
     buffer[2047] = 0x5A;
     // AFTER the buffer is written. Measured: recording this before the writes told the Core the task returned 0, and
     // the verdict printed "returned 0x0" - the three facts did the work the narrative had been doing.
-    let uart = Uart::at(uart::base());
+    let uart = Uart::at(UART_QEMU_VIRT);
     uart.write_str("M4a: the task is running, with its stack somewhere near 0x");
     // The address of a local, i.e. where the task's stack actually is.
     uart.write_hex(buffer.as_ptr() as u64);
@@ -303,7 +303,7 @@ pub extern "C" fn irq_switch(sp: usize) -> usize {
 /// The second task's entry: it prints once and halts, which is enough to prove it was ever run.
 #[unsafe(no_mangle)]
 pub extern "C" fn task_second_entry() {
-    let uart = Uart::at(uart::base());
+    let uart = Uart::at(UART_QEMU_VIRT);
     let mut spins: u64 = 0;
     // Count first, so "it ran" is arithmetic and not a claim: the CPU had to be here for this loop to execute.
     while spins < 5_000 {
@@ -326,7 +326,7 @@ pub extern "C" fn task_second_entry() {
 /// Where an aborted task leaves the machine: the Core's stack is back, the violation is already written, and the boot
 /// carries on. This never returns, which is why the switch needs to park only a stack pointer.
 extern "C" fn after_task_aborted() -> ! {
-    let uart = Uart::at(uart::base());
+    let uart = Uart::at(UART_QEMU_VIRT);
     uart.write_line("M4c: TASK ABORTED — the Core resumed on its own stack, the evidence stays, the boot continues");
     uart.write_line(DONE);
     boot_epilogue(&uart);
@@ -424,24 +424,7 @@ fn fdt_demo(uart: &Uart) {
 /// The Core's first instruction in Rust.
 #[unsafe(no_mangle)]
 pub extern "C" fn kmain() -> ! {
-    // ---- WHERE IS THE CONSOLE? The firmware's device tree answers, when there is one. This runs BEFORE the first
-    // print, because the answer is what makes printing possible. ----
-    let mut console_source = "the constant (no device tree)";
-    if unsafe { DTB_POINTER } != 0 {
-        if let Ok(a) = fdt::find_compatible(unsafe { DTB_POINTER }, "arm,pl011") {
-            uart::set_base(a.base as usize);
-            console_source = "the firmware's device tree";
-        }
-    }
-    let uart = Uart::at(uart::base());
-    {
-        let mut l = uart::LineBuf::new();
-        l.push_str("UART: console at ");
-        l.push_hex(uart::base() as u64);
-        l.push_str(" from ");
-        l.push_str(console_source);
-        l.flush(&uart);
-    }
+    let uart = Uart::at(UART_QEMU_VIRT);
     uart.init();
 
     uart.write_line(BANNER);
@@ -1003,7 +986,7 @@ pub extern "C" fn kmain() -> ! {
 /// "it faulted reading 0x… at 0x…", and it costs a handful of instructions on a path that has already gone wrong.
 #[unsafe(no_mangle)]
 pub extern "C" fn exc_report(esr: u64, far: u64, elr: u64) {
-    let uart = Uart::at(uart::base());
+    let uart = Uart::at(UART_QEMU_VIRT);
     uart.init();
     uart.write_line("MORPHEOS-CORE: EXCEPTION — the Core faulted, and this is it reporting rather than stopping");
 
@@ -1068,7 +1051,7 @@ pub extern "C" fn exc_report(esr: u64, far: u64, elr: u64) {
 
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
-    let uart = Uart::at(uart::base());
+    let uart = Uart::at(UART_QEMU_VIRT);
     uart.init();
     uart.write_line("MORPHEOS-CORE: PANIC — the Core failed before it could report");
     if let Some(location) = info.location() {
