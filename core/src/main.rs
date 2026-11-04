@@ -21,8 +21,10 @@ use core::arch::global_asm;
 use core::panic::PanicInfo;
 
 mod cap;
+mod ledger;
 mod uart;
 use cap::{access, CapTable, Object, ObjectId};
+use ledger::Ledger;
 use uart::{Uart, UART_QEMU_VIRT};
 
 /// The line M0 asserts. One place, so the test and the Core cannot disagree.
@@ -83,6 +85,12 @@ pub extern "C" fn kmain() -> ! {
     let _ = access(&uart, "task_plugin", &task_plugin, &measurement); // must be REFUSED by the Core
 
     uart.write_line("M1: the Core decided both directions; no task holds a capability it was not handed");
+
+    // ---- M2: the ledger. State as generations, undo without a reboot, and a generation that does not check out is
+    // refused rather than used. ----
+    let mut machine = Ledger::empty();
+    ledger::report(&uart, &mut machine);
+
     uart.write_line(DONE);
 
     // Nothing to return to: no scheduler and no exit device on this architecture. The test harness watches the serial
