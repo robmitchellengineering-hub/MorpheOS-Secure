@@ -252,6 +252,7 @@ pub extern "C" fn kmain() -> ! {
         uart.write_str("M4b: FAIL the task read the Core's memory (value ");
         uart.write_hex(stolen);
         uart.write_line(") — the map was supposed to make that impossible");
+        uart.write_line("M4c: NOTE the task returned instead of faulting, so there was no abort to exercise");
         // SAFETY: restore the Core's regime for the rest of the boot.
         unsafe { mmu::use_core_tables() };
         uart.write_line("M4b: the Core is back on its own tables");
@@ -380,11 +381,11 @@ pub extern "C" fn exc_report(esr: u64, far: u64, elr: u64) {
     if far == mmu::PRIVATE as u64 {
         uart.write_line("  M4b: TASK VIOLATION — the task named 0x4E000000, which is absent from its own map");
         uart.write_line("  M4b: the Core maps that block; the task's tables do not. This is containment, not a refusal.");
-        loop {
-            // SAFETY: the task has attempted something the machine cannot allow; on this rung the Core halts with
-            // the evidence written, and task abort (returning to a known-good context) is the next rung.
-            unsafe { core::arch::asm!("wfe", options(nomem, nostack)) };
-        }
+        uart.write_line("  M4b: aborting the task — the Core resumes, the evidence stays");
+        // THE ABORT, rung M4c: instead of halting the machine, give the Core its stack and return address back and
+        // continue as if the task had finished. A task that oversteps is a dead task, not a dead show.
+        // SAFETY: `run` parked the Core's context before the task started.
+        unsafe { task::abort_to_core() };
     }
     if far == GUARD {
         PROBE_FAULTED.store(true, core::sync::atomic::Ordering::SeqCst);
