@@ -43,27 +43,32 @@ sed -e 's/\r$//' "$LOG" | grep -E "^M2b:|^MORPHEOS-CORE: reported" | head -12
 REFUSED="M2b: DOUBLE FREE REFUSED — the block was not inserted twice"
 ACCEPTED="M2b: FAIL a double free was accepted; two owners can now hold the same bytes"
 REUSED="M2b: the freed block was reused by the next allocation (first fit, as designed)"
+FIRST_OK="M2b: free#1 -> accepted=0x1"
+SECOND_REFUSED="M2b: free#2 -> accepted=0x0"
+SECOND_ACCEPTED="M2b: free#2 -> accepted=0x1"
 
 if [ "$MODE" = "--self-test" ]; then
-    if grep -qF "$REFUSED" "$LOG"; then
-        echo "FAIL (self-test): the mutation accepted the double free but the refusal still appeared" >&2
+    # The mutation accepts a second free. Under it, free#2 must be ACCEPTED and the refusal line must be absent —
+    # otherwise the check is reading a string, not the allocator's flag.
+    if grep -qF "$SECOND_REFUSED" "$LOG"; then
+        echo "FAIL (self-test): the mutation accepted the double free but free#2 still reported a refusal" >&2
         exit 1
     fi
-    if ! grep -qF "$ACCEPTED" "$LOG"; then
+    if ! grep -qF "$SECOND_ACCEPTED" "$LOG" || ! grep -qF "$ACCEPTED" "$LOG"; then
         echo "FAIL (self-test): with the guard off the allocator did not report the acceptance" >&2
         exit 1
     fi
-    echo "ok (self-test): with the guard off the double free is accepted, so the refusal is the allocator's"
+    echo "ok (self-test): with the guard off free#2 is accepted, so the refusal is the allocator's own flag"
     exit 0
 fi
 
 missing=""
-grep -qF "$REUSED" "$LOG" || missing="$missing
-  - $REUSED"
-grep -qF "$REFUSED" "$LOG" || missing="$missing
-  - $REFUSED"
+for line in "$REUSED" "$FIRST_OK" "$SECOND_REFUSED" "$REFUSED"; do
+    grep -qF "$line" "$LOG" || missing="$missing
+  - $line"
+done
 if [ -n "$missing" ]; then
     echo "FAIL: the allocator did not reach the states it must. Missing:$missing" >&2
     exit 1
 fi
-echo "ok: allocated and reused through the Core's own allocator, and a double free was refused"
+echo "ok: allocated and reused through the Core's own allocator, and the second free was refused"
