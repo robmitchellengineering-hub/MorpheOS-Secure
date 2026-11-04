@@ -240,6 +240,21 @@ pub extern "C" fn kmain() -> ! {
     uart.write_line("");
     if seen >= task_bottom && seen < task_stack_top && value == 0xFF {
         uart.write_line("M4a: the task ran on its own stack and returned to the Core");
+
+        // ---- M4b: the task's own address space. The Core maps PRIVATE; the task's tables do not. ----
+        mmu::build_task_tables();
+        uart.write_line("M4b: switching the task to its own tables — the private block is absent from its map");
+        // SAFETY: the tables are built and the code running here is mapped in both regimes.
+        unsafe { mmu::use_task_tables() };
+        uart.write_line("M4b: task tables active; the task now reaches for 0x4E000000, which the Core maps and it does not");
+        // SAFETY: the read is the attack. If the tables are right, it faults and the handler reports the violation.
+        let stolen = unsafe { core::ptr::read_volatile(mmu::PRIVATE as *const u64) };
+        uart.write_str("M4b: FAIL the task read the Core's memory (value ");
+        uart.write_hex(stolen);
+        uart.write_line(") — the map was supposed to make that impossible");
+        // SAFETY: restore the Core's regime for the rest of the boot.
+        unsafe { mmu::use_core_tables() };
+        uart.write_line("M4b: the Core is back on its own tables");
     } else {
         uart.write_line("M4a: FAIL the task did not return the value it must");
     }
@@ -362,6 +377,15 @@ pub extern "C" fn exc_report(esr: u64, far: u64, elr: u64) {
     // else is fatal. This is containment demonstrated: the Core touched memory it did not map, the machine reported
     // it precisely, and the machine kept running.
     const GUARD: u64 = 0x4F00_0000;
+    if far == mmu::PRIVATE as u64 {
+        uart.write_line("  M4b: TASK VIOLATION — the task named 0x4E000000, which is absent from its own map");
+        uart.write_line("  M4b: the Core maps that block; the task's tables do not. This is containment, not a refusal.");
+        loop {
+            // SAFETY: the task has attempted something the machine cannot allow; on this rung the Core halts with
+            // the evidence written, and task abort (returning to a known-good context) is the next rung.
+            unsafe { core::arch::asm!("wfe", options(nomem, nostack)) };
+        }
+    }
     if far == GUARD {
         PROBE_FAULTED.store(true, core::sync::atomic::Ordering::SeqCst);
         uart.write_line("  MMU: guard page FAULTED as required — 0x50000000 is not mapped, and the Core survived it");
