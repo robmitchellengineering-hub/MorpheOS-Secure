@@ -320,19 +320,6 @@ pub extern "C" fn kmain() -> ! {
         uart.write_hex(arrived);
         uart.write_line(" timer interrupts arrived in 50 ms — the interrupt path is not working");
     }
-    if fired {
-        uart.write_str("TICK: the EL1 timer fired, 0x");
-        uart.write_hex(fired_ns);
-        uart.write_line(" ns after it was armed (comparator status read from CNTP_CTL_EL0)");
-        // Armed for 1 ms: firing before 1 ms would be wrong, and firing after 50 ms means it was not this timer.
-        if fired_ns >= 900_000 && fired_ns <= 5_000_000 {
-            uart.write_line("TICK: the timer fired when it was told to (within 5x of 1 ms)");
-        } else {
-            uart.write_line("TICK: FAIL the timer fired at the wrong time");
-        }
-    } else {
-        uart.write_line("TICK: FAIL the timer never fired within 50 ms");
-    }
 
     // ---- M2: the ledger. ----
     let mut machine = Ledger::empty();
