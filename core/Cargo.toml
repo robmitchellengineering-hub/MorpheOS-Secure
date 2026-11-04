@@ -30,3 +30,5 @@ task-mutant-no-switch = []
 # The mutation for M4b: give the task the Core's own tables, so the private block IS reachable and
 # the violation the check requires cannot happen.
 task-mutant-share-tables = []
+# The mutation for M5a: a clock that never advances, so a deadline check that passes is reading a constant.
+tick-mutant-frozen = []

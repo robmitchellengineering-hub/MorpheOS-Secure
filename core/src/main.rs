@@ -25,6 +25,7 @@ extern crate alloc;
 #[path = "alloc.rs"]
 mod heap;
 mod cap;
+mod clock;
 mod ledger;
 mod mmu;
 mod task;
@@ -195,6 +196,57 @@ pub extern "C" fn kmain() -> ! {
     let _ = access(&uart, "task_plugin", &task_plugin, &plugin_state);
     let _ = access(&uart, "task_plugin", &task_plugin, &measurement);
     uart.write_line("M1: the Core decided both directions; no task holds a capability it was not handed");
+
+    // ---- M5a: the machine's clock. The counter every deadline will be measured against. ----
+    let freq = clock::frequency();
+    uart.write_str("TICK: CNTFRQ_EL0 = 0x");
+    uart.write_hex(freq);
+    uart.write_line(" Hz (from the hardware, not from a table)");
+    // The Core states this itself rather than leaving a gate to guess at a hex string. Measured: two rounds were lost
+    // to a regex over a zero-padded value, which is a gate problem pretending to be a clock problem.
+    if freq != 0 {
+        uart.write_line("TICK: the frequency is non-zero, as a clock needs it to be");
+    } else {
+        uart.write_line("TICK: FAIL the hardware reported no frequency");
+    }
+    let start = clock::now();
+    // A known workload, so the advance is measured rather than asserted.
+    let mut spin: u64 = 0;
+    for i in 0..200_000u64 {
+        spin = spin.wrapping_add(i);
+    }
+    let after = clock::now();
+    let advanced = after.saturating_sub(start);
+    uart.write_str("TICK: the counter advanced by 0x");
+    uart.write_hex(advanced);
+    uart.write_str(" ticks over a 200k-iteration loop (checksum 0x");
+    uart.write_hex(spin);
+    uart.write_line(")");
+    if advanced == 0 {
+        uart.write_line("TICK: FAIL the counter did not advance — a deadline can never be met");
+    } else {
+        uart.write_line("TICK: the counter advances");
+    }
+    // A deadline: 1 ms, measured in the hardware's own units, and measured ONLY around the wait.
+    //
+    // Measured wrong the first time: the reading was taken before the line above was printed, so the console write
+    // (~100 characters at 115200 baud) was counted as part of a 1 ms deadline — which is where the reported 10.8 ms
+    // came from. A latency figure that includes the instrument is not a latency figure.
+    let before = clock::now();
+    let deadline = before + clock::ticks_for_ms(1);
+    let reached = clock::wait_until(deadline);
+    let elapsed_ns = clock::ns_between(before, reached);
+    uart.write_str("TICK: a 1 ms deadline was reached, 0x");
+    uart.write_hex(elapsed_ns);
+    uart.write_line(" ns after the wait began");
+    // Strict, and on purpose: a 1 ms deadline met in 10 ms is a miss, and a bound that accepts it is not a bound.
+    if elapsed_ns >= 1_000_000 && elapsed_ns <= 3_000_000 {
+        uart.write_line("TICK: the deadline was honoured in real time (within 3 ms of a 1 ms target)");
+    } else if elapsed_ns < 1_000_000 {
+        uart.write_line("TICK: FAIL the deadline returned before its time");
+    } else {
+        uart.write_line("TICK: FAIL the deadline missed by more than 3x — real-time budget not met");
+    }
 
     // ---- M2: the ledger. ----
     let mut machine = Ledger::empty();
