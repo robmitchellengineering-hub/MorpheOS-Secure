@@ -26,6 +26,7 @@ extern crate alloc;
 mod heap;
 mod cap;
 mod ledger;
+mod mmu;
 mod uart;
 use cap::{access, CapTable, Object, ObjectId};
 use ledger::Ledger;
@@ -37,6 +38,11 @@ use uart::{Uart, UART_QEMU_VIRT};
 /// The line M0 asserts. One place, so the test and the Core cannot disagree.
 pub const BANNER: &str = "MORPHEOS-CORE 0.0.1: the Core is running on aarch64; no Linux, no syscalls, no processes";
 pub const DONE: &str = "MORPHEOS-CORE: reported; halting";
+
+/// Set by the fault handler when the guard probe faulted, so the code *after* the probe can tell a recovered fault
+/// from a successful read. Without this the post-fault path cannot distinguish them — measured: the probe faulted,
+/// the handler recovered, and the Core then printed the failure line because nothing recorded that the fault happened.
+static PROBE_FAULTED: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
 // The entry point, in assembly, because there is no stack until it makes one. QEMU starts us at EL1 in AArch64 with
 // the MMU off; `sp` is not guaranteed to point anywhere useful, so that is the whole of the first instruction's job,
@@ -77,10 +83,51 @@ _start:
 vectors:
     .rept 16
     .balign 128
+    /* The FULL general register set. Measured: saving only x0-x3 let the Rust handler clobber the
+     * registers the resumed code depended on, so the first return from a fault resumed into garbage. The handler is
+     * ordinary Rust and is entitled to clobber x0-x18; a recovery path must give every register back.
+     * 256 bytes keeps sp 16-byte aligned. x30 is saved with the rest because `bl` overwrites it.
+     * Known gap, stated: the FP/SIMD registers are not saved. A fault taken with live FP state loses it, which is
+     * acceptable while the only recovery is a u64 probe and is the next thing to fix before real task switching. */
+    sub sp, sp, #256
+    stp x0, x1, [sp, #0]
+    stp x2, x3, [sp, #16]
+    stp x4, x5, [sp, #32]
+    stp x6, x7, [sp, #48]
+    stp x8, x9, [sp, #64]
+    stp x10, x11, [sp, #80]
+    stp x12, x13, [sp, #96]
+    stp x14, x15, [sp, #112]
+    stp x16, x17, [sp, #128]
+    stp x18, x19, [sp, #144]
+    stp x20, x21, [sp, #160]
+    stp x22, x23, [sp, #176]
+    stp x24, x25, [sp, #192]
+    stp x26, x27, [sp, #208]
+    stp x28, x29, [sp, #224]
+    str x30, [sp, #240]
     mrs x0, esr_el1
     mrs x1, far_el1
     mrs x2, elr_el1
-    b   exc_report
+    bl  exc_report
+    ldp x0, x1, [sp, #0]
+    ldp x2, x3, [sp, #16]
+    ldp x4, x5, [sp, #32]
+    ldp x6, x7, [sp, #48]
+    ldp x8, x9, [sp, #64]
+    ldp x10, x11, [sp, #80]
+    ldp x12, x13, [sp, #96]
+    ldp x14, x15, [sp, #112]
+    ldp x16, x17, [sp, #128]
+    ldp x18, x19, [sp, #144]
+    ldp x20, x21, [sp, #160]
+    ldp x22, x23, [sp, #176]
+    ldp x24, x25, [sp, #192]
+    ldp x26, x27, [sp, #208]
+    ldp x28, x29, [sp, #224]
+    ldr x30, [sp, #240]
+    add sp, sp, #256
+    eret
     .endr
 "#
 );
@@ -118,6 +165,34 @@ pub extern "C" fn kmain() -> ! {
     // ---- M2: the ledger. ----
     let mut machine = Ledger::empty();
     ledger::report(&uart, &mut machine);
+
+    // ---- M3a: the MMU. Our page tables, our translation regime, and a guard page that must fault. ----
+    uart.write_line("MMU: building our own tables (Device 0..1G, Normal 0x4000_0000..0x4F00_0000, guard at 0x4F00_0000)");
+    mmu::build();
+    // SAFETY: the tables are built and the identity map covers this code, the stack and the arena.
+    unsafe { mmu::enable() };
+    uart.write_line("MMU: ENABLED — SCTLR_EL1.M is set, every access is now translated by our tables");
+
+    // A valid access still works: read the banner's first byte through the new translation.
+    let probe = unsafe { core::ptr::read_volatile(BANNER.as_ptr()) };
+    if probe == b'M' {
+        uart.write_line("MMU: a mapped read still works (the banner's first byte is 'M')");
+    } else {
+        uart.write_line("MMU: FAIL a mapped read returned the wrong byte");
+    }
+
+    // The guard: read memory we never mapped. This MUST fault, and the handler must survive it.
+    uart.write_line("MMU: touching the unmapped guard page 0x50000000, which must fault");
+    let phantom = unsafe { core::ptr::read_volatile(0x4F00_0000 as *const u64) };
+    // Either the read faulted (and the handler recorded it) or it succeeded — and a successful read of an unmapped
+    // page is the failure. The two paths are told apart by the flag, not by whether a line was printed.
+    if PROBE_FAULTED.load(core::sync::atomic::Ordering::SeqCst) {
+        uart.write_line("MMU: the Core continued past the guard probe — the fault was caught, the machine did not die");
+    } else {
+        uart.write_str("MMU: FAIL the guard page was readable (value ");
+        uart.write_hex(phantom);
+        uart.write_line(") — memory we did not map must not be reachable");
+    }
 
     // ---- M2b: the memory the machine owns. ----
     // SAFETY: called once, before any allocation, on the single core this rung runs on.
@@ -190,7 +265,7 @@ pub extern "C" fn kmain() -> ! {
 /// one, and `elr` the instruction that was executing. Printing all three is the difference between "it stopped" and
 /// "it faulted reading 0x… at 0x…", and it costs a handful of instructions on a path that has already gone wrong.
 #[unsafe(no_mangle)]
-pub extern "C" fn exc_report(esr: u64, far: u64, elr: u64) -> ! {
+pub extern "C" fn exc_report(esr: u64, far: u64, elr: u64) {
     let uart = Uart::at(UART_QEMU_VIRT);
     uart.init();
     uart.write_line("MORPHEOS-CORE: EXCEPTION — the Core faulted, and this is it reporting rather than stopping");
@@ -227,8 +302,20 @@ pub extern "C" fn exc_report(esr: u64, far: u64, elr: u64) -> ! {
             uart.write_line("  cause: data abort — see FAR above for the address that faulted");
         }
     }
+    // THE ONE FAULT THAT IS EXPECTED. The guard probe reads 0x4F00_0000, which is deliberately unmapped; the handler
+    // recognises that address, says so, and resumes after the faulting instruction (a load is 4 bytes). Everything
+    // else is fatal. This is containment demonstrated: the Core touched memory it did not map, the machine reported
+    // it precisely, and the machine kept running.
+    const GUARD: u64 = 0x4F00_0000;
+    if far == GUARD {
+        PROBE_FAULTED.store(true, core::sync::atomic::Ordering::SeqCst);
+        uart.write_line("  MMU: guard page FAULTED as required — 0x50000000 is not mapped, and the Core survived it");
+        // SAFETY: resume after the faulting load.
+        unsafe { core::arch::asm!("msr elr_el1, {0}", in(reg) elr + 4, options(nostack)) };
+        return;
+    }
     loop {
-        // SAFETY: nothing else to do after a fault on this rung.
+        // SAFETY: nothing else to do after an unexpected fault.
         unsafe { core::arch::asm!("wfe", options(nomem, nostack)) };
     }
 }
