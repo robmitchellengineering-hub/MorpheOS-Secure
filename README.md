@@ -36,6 +36,13 @@ What *does* exist, and is carried here, is everything a secure Core has to satis
   an isolated VM** — a compatibility device the Core does not trust — and [CORE.md](CORE.md) says so in
   those words rather than implying it.
 
+## The wedge, in the boot path
+
+**Never breaks, and heals itself** is not a feature of this OS; it is the first thing the loader does. Two generations
+of the Core, **one** trial boot for a new one, commit only when the Core reaches a health signal, automatic fallback
+to the generation that works, and a record of what was tried that survives the failure. A boot path retrofitted with
+two generations later is a boot path designed with one. [CORE.md](CORE.md) states the rule and its falsifiers.
+
 ## The rule this repository holds itself to
 
 **A claim with no attack is not a claim.** Every statement in these documents is either something an attacker

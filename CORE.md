@@ -57,7 +57,8 @@ until a driver box exists for them. That is the price of a Core that is its own 
 
 | rung | what we build | it proves | falsifier |
 |---|---|---|---|
-| **M0** | boots in QEMU to a Rust task that prints what the machine is, with **no Linux and no bootloader we did not write** | a Core of our own reaches userspace | it does not reach the task, or the task cannot report |
+| **M0** | **builds**, and its own check is proven able to fail | the Core is real code that compiles, and the gate is not theatre | the build fails, or `--self-test` passes on a deliberately wrong line |
+| **M0b** | **our loader**: a 32-bit entry that sets up long mode and enters the 64-bit Core, **with two generations, a one-shot trial and a fallback** | the machine boots *our* Core through *our* loader, and cannot be left with a Core that does not come up | the loader does not reach the Core; a corrupted newer generation is not rolled back; a generation that failed health is tried twice |
 | **M1** | capabilities: a task granted one object and refused another, with the refusal coming from the Core | authority is objects, not users | a task reaches an object the kernel did not grant |
 | **M2** | the history: state as signed generations; undo to an earlier generation without a reboot | the machine is its history | an undo loses data, or a tampered generation is accepted |
 | **M3** | the failure path: a hard lockup leaves Core-written evidence, and a bad generation is not descended from | the machine explains itself without userspace | no evidence after a lockup, or a bad generation boots again |
@@ -88,6 +89,29 @@ Core either handed you or did not** — there is no path around it, because ther
 
 That is the whole argument, and it is why this project writes a Core instead of configuring one: the properties
 that make this a different kind of computer are properties of the Core, not settings.
+
+## Never breaks, heals itself — from the first boot, not retrofitted
+
+This is the wedge of the whole OS, and it is a property of the **boot path**, not a feature added later. The loader
+keeps **two generations of the Core**, and the rule is the one the estate already proved on the everyday build:
+
+1. **A new generation is tried once.** It gets one boot to reach a health signal. There is no boot counter to get
+   stuck on, and no "try again" that turns a bad image into a slow failure.
+2. **It commits only on health.** Reaching the health signal is what makes the new generation the default; anything
+   else — a panic, a hang, silence — is a failed trial.
+3. **Failure falls back, and says so.** The previous generation boots, the machine records that it happened, and the
+   record survives the failure (that is rung M3's job: evidence the Core wrote, readable after a reboot).
+4. **The machine rebuilds the spare.** A slot that failed is not left dead — it is rewritten from the generation that
+   works.
+
+**Falsifiers, and they are the rung's whole point:** corrupt the newest generation on disk and the machine must still
+reach the older one; give it a generation that boots and never signals health and it must not be tried a second
+time; and after either, the record must name what was tried and what was refused.
+
+**Why the loader first.** QEMU's own multiboot loader refuses a 64-bit image outright — measured on this rung:
+*"Cannot load x86-64 image, give a 32bit one."* So writing our own loader is not a refinement of M0, it is the thing
+that makes any 64-bit Core boot at all, and it is where A/B belongs: a boot path retrofitted with two generations
+later is a boot path that was designed with one.
 
 ## The words this project uses, and refuses
 
