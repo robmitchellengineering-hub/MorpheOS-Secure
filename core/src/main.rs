@@ -234,7 +234,7 @@ irq_entry:
     bl  irq_switch
     mov sp, x0
 
-    RESTORE_ALL
+    RESTORE_ALL_WITH_STATE
     eret
 
     "#
@@ -294,6 +294,51 @@ extern "C" fn after_task_aborted() -> ! {
     uart.write_line(DONE);
     loop {
         // SAFETY: an aborted task's continuation has nothing to return to on this rung.
+        unsafe { core::arch::asm!("wfe", options(nomem, nostack)) };
+    }
+}
+
+/// The first task: it counts until it is done and then says so. It never yields — the only way it loses the CPU is
+/// the timer taking it, which is the whole point.
+fn task_a_entry(uart: &Uart) -> ! {
+    let mut spins: u64 = 0;
+    while spins < 200_000 {
+        spins += 1;
+        core::hint::spin_loop();
+    }
+    // Through the buffer, so the line cannot be spliced by the other task printing at the same moment.
+    {
+        let mut line = uart::LineBuf::new();
+        line.push_str("TASK A: ran ");
+        line.push_u64(spins);
+        line.push_str(" iterations — and it was interrupted along the way");
+        line.flush(uart);
+    }
+    loop {
+        // SAFETY: task A is done.
+        unsafe { core::arch::asm!("wfe", options(nomem, nostack)) };
+    }
+}
+
+/// The second task's entry: it prints once and halts, which is enough to prove it was ever run.
+#[unsafe(no_mangle)]
+pub extern "C" fn task_second_entry() {
+    let uart = Uart::at(UART_QEMU_VIRT);
+    let mut spins: u64 = 0;
+    // Count first, so "it ran" is arithmetic and not a claim: the CPU had to be here for this loop to execute.
+    while spins < 5_000 {
+        spins += 1;
+        core::hint::spin_loop();
+    }
+    {
+        let mut line = uart::LineBuf::new();
+        line.push_str("TASK B: ran ");
+        line.push_u64(spins);
+        line.push_str(" iterations on its own stack — the switch reached it");
+        line.flush(&uart);
+    }
+    loop {
+        // SAFETY: a task with nothing to do waits.
         unsafe { core::arch::asm!("wfe", options(nomem, nostack)) };
     }
 }
@@ -631,6 +676,36 @@ pub extern "C" fn kmain() -> ! {
     }
 
     uart.write_line(DONE);
+
+    // ---- M5c part four: preemption. GATED, and LAST: this is the one rung that never returns. ----
+    #[cfg(feature = "preempt-demo")]
+    {
+    // ---- M5c part four: preemption. GATED: the two-task demo never returns, so it runs only when the gate asks
+    // for it. Every other gate boots exactly as before - which is the property the sweep caught us losing. ----
+    // ---- M5c part four: preemption. Two contexts, one CPU, and the timer choosing between them. ----
+    let second_top = {
+        let base = core::ptr::addr_of!(sched::TASK_B_STACK) as usize;
+        base + core::mem::size_of::<sched::TaskStack>()
+    };
+    let second_frame = sched::install_frame(second_top, task_second_entry as usize);
+    sched::install_second(second_frame);
+    let (elr, spsr) = sched::frame_state(second_frame);
+    uart.write_str("PREEMPT: second task frame at 0x");
+    uart.write_hex(second_frame as u64);
+    uart.write_str(", resumes at 0x");
+    uart.write_hex(elr);
+    uart.write_str(" in PSTATE 0x");
+    uart.write_hex(spsr);
+    uart.write_line("");
+    // The boot's own frame is recorded by the first interrupt, so nothing to do here but turn it on.
+    sched::enable_switching();
+    // Measured: the interrupt demo at M5b ends by MASKING interrupts for determinism, so task A ran to completion with
+    // no tick at all and no switch happened. Preemption needs them on.
+    gic::unmask();
+    uart.write_line("PREEMPT: switching enabled and interrupts unmasked — the next tick may move the CPU");
+    // From here this context IS task A. It never returns; the timer is the only thing that takes the CPU away.
+    task_a_entry(&uart);
+    }
     loop {
         // SAFETY: `wfe` at EL1 is always legal; it is the correct way for an idle core to wait.
         unsafe { core::arch::asm!("wfe", options(nomem, nostack)) };
