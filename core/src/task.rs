@@ -78,11 +78,14 @@ pub unsafe fn run(entry: Entry, stack_top: usize) {
             "mov sp, x20",
             "ldr x30, [{lr_slot}]",
             "ret",
-            sp_slot = in(reg) sp_slot,
-            lr_slot = in(reg) lr_slot,
-            pc_slot = in(reg) pc_slot,
-            stack = in(reg) stack_top,
-            entry = in(reg) entry as usize,
+            // PINNED REGISTERS, and this is the bug the first version had: `in(reg)` operands are allocated by the
+            // compiler and can land in x20/x21 — the very registers this asm uses — so `mov x20, sp` overwrote the
+            // pointer it was about to store through. Measured: the task ran and the Core never came back.
+            sp_slot = in("x22") sp_slot,
+            lr_slot = in("x23") lr_slot,
+            pc_slot = in("x24") pc_slot,
+            stack = in("x25") stack_top,
+            entry = in("x26") entry as usize,
             out("x20") _, out("x21") _,
         );
     }
