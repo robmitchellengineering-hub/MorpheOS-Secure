@@ -19,8 +19,10 @@ the destination.
   **and** be caught, and an explicit UNKNOWN. This is the standard the new kernel will be judged by.
 - `SEALED-STATE.md`, `ATTESTATION.md`, `MEASURED-BOOT.md` — what the machine must be able to prove about itself,
   and exactly where each claim stops.
-- `adr/0022-own-the-kernel-build.md` — the record of the step before this one. It explains why the tests exist and
-  why building Linux ourselves was a platform, not the destination.
+- The attacks the earlier work produced, kept as the standard this kernel will be judged by. The kernel that
+  earlier work built — a Linux, configured and renamed — is **not** this project's direction and is not carried
+  here. Rob, when the framing slipped back into it: *"You just said building linux ourselves ... thats not what i
+  want to do, we are building a new type of operating system."*
 
 ## What is deliberately out
 

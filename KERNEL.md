@@ -31,19 +31,20 @@ over **versioned state**, and the display is a projection of that state.
 
 ## Hardware — the cost, stated once
 
-A from-scratch kernel has no drivers, and this estate's machines are laptops with Wi-Fi (`b43`, `iwlwifi`), a
-panel (`i915`, `amdgpu`) and audio (`snd-hda-intel`). Two honest options, and the plan is the second:
+This estate's machines are laptops: Wi-Fi (`b43`, `iwlwifi`), a panel (`i915`, `amdgpu`), audio
+(`snd-hda-intel`). A new kernel has no drivers for any of them, and there are three honest ways to get them:
 
-1. **Write native drivers** — a driver per chip, forever. That is the graveyard most new operating systems
-   disappear into, and it is why the original design chose a Linux hardware abstraction layer in the first
-   place.
-2. **Host Linux drivers in isolated driver VMs** (doc 03's own scope: *"It would host Linux drivers in isolated
-   driver VMs (the 'driver capsule' approach), so we never lose hardware support."*). The kernel trusts the
-   driver **not to escape**, not to be correct. A driver crash takes down one VM, not the machine; a malicious
-   driver has no capability the kernel did not hand it.
+1. **Native drivers, written for this kernel.** A driver per chip, forever. That is where most new operating
+   systems disappear, and we will not pretend otherwise.
+2. **Foreign drivers in isolated VMs** — a vendor or Linux driver running as **untrusted code in a box the kernel
+   controls**, holding only the capabilities it was handed. A driver crash takes down one box, not the machine; a
+   malicious driver has nothing to escalate from. This is the plan: Linux is a *device provider*, never the
+   operating system.
+3. **No driver yet.** For the first rungs, QEMU's virtio devices are the hardware, and that is enough to prove a
+   kernel.
 
-Option 2 means the first bootable Morph does **not** have Wi-Fi, a panel or audio until a driver VM exists for
-them. That is the price of a kernel that is its own thing, and it is written here rather than discovered later.
+Consequence, written before it is discovered: the first bootable Morph has **no Wi-Fi, no panel and no audio**
+until a driver box exists for them. That is the price of a kernel that is its own thing.
 
 ## The rungs, each with what it proves
 
@@ -72,13 +73,11 @@ The security arm's attacks are not Linux-specific, they are questions about a ma
 They are kept here as `acceptance/` because they are the standard the new kernel will be held to, and because a
 kernel for a new type of computer that cannot pass them is a different computer with the same holes.
 
-## Why this is not a from-scratch entry in the graveyard
+## Why the kernel, and not an operating system assembled above one
 
-The original design's own answer, kept honest: the estate's earlier plan used Linux as a hardware abstraction
-layer for its first phases, for the reason above — drivers. Morph exists because the *security claims* cannot be
-enforced from userspace: an LSM a distro applies is a policy its platform can decline, and a capability is an
-object the kernel either handed you or did not.
+Because the four properties above cannot be enforced from above. A policy applied by a platform is a policy that
+platform can decline; a sandbox built by the thing being sandboxed is a promise. A capability is an **object the
+kernel either handed you or did not** — there is no path around it, because there is no path.
 
-So the sequencing is: **the kernel is the product here, the drivers are a compatibility device, and the
-acceptance suite decides.** If that trade is wrong, the honest alternative is to keep the Linux HAL — and that
-is a different repository.
+That is the whole argument, and it is why this project writes a kernel instead of configuring one: the
+properties that make this a different kind of computer are kernel properties, not settings.

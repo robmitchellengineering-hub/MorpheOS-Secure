@@ -22,15 +22,15 @@ What *does* exist, and is carried here, is everything a secure kernel has to sat
 | [acceptance/attacks/](acceptance/attacks/) | the real attackers: port scan, console credential, hostile update, the disk alone (A1–A7), each with fixtures that must pass **and** be caught, and an explicit UNKNOWN |
 | [PLAN.md](PLAN.md) | the security plan, and what each control becomes when the kernel is ours instead of borrowed |
 | [SEALED-STATE.md](SEALED-STATE.md) · [ATTESTATION.md](ATTESTATION.md) · [MEASURED-BOOT.md](MEASURED-BOOT.md) | the three design documents that state what the machine must be able to prove about itself, and exactly where the claim stops |
-| [adr/0022-own-the-kernel-build.md](adr/0022-own-the-kernel-build.md) | the record of the step before this one: we built Linux ourselves. That was the platform the tests ran on, not the destination |
 
 ## What is deliberately not here
 
 - **The everyday MorpheOS image, builder and design set.** Different project, different repo. This one does not
   import it, wrap it, or add flags to it.
-- **Linux.** Not as the kernel, not as the foundation. Where Linux remains, it is a *driver host inside an
-  isolated VM* — a device the new kernel does not trust — and that is stated in [KERNEL.md](KERNEL.md) rather
-  than implied.
+- **Linux as a foundation.** This operating system is not built on it, not configured from it, and not renamed
+  out of it. Where a Linux *driver* is the only way to talk to a chip, that driver runs as **foreign code inside
+  an isolated VM** — a compatibility device the kernel does not trust — and [KERNEL.md](KERNEL.md) says so in
+  those words rather than implying it.
 
 ## The rule this repository holds itself to
 
