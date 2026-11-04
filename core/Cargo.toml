@@ -11,3 +11,8 @@ path = "src/main.rs"
 
 # No dependencies. A Core that pulls a crate graph on its first rung has already stopped being auditable.
 [dependencies]
+
+[features]
+# The mutation for M1's falsifier: grant `task_bench` the object it must be refused. If `scripts/m1.sh --self-test`
+# still passes with this on, the test is checking a string and not the Core's table.
+m1-mutant-grant = []
