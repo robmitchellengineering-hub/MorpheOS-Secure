@@ -14,7 +14,7 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
-GATES=(m0 m1 m2 m2b mmu task isolation clock tick sched preempt prio)
+GATES=(m0 m1 m2 m2b mmu task isolation clock tick sched preempt prio cert)
 pass=0
 fail=0
 declare -a RED

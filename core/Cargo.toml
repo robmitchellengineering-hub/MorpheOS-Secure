@@ -45,3 +45,5 @@ preempt-demo = []
 # M5d's mutation: ignore priority and round-robin, which looks like a scheduler and lets a lower class take the
 # audio class's CPU.
 sched-mutant-ignore-priority = []
+# M7a's mutation: accept every certificate. The over-budget case must then be admitted and the gate must go red.
+cert-mutant-skip-check = []
