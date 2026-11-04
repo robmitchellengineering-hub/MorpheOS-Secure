@@ -97,6 +97,7 @@ pub extern "C" fn kmain() -> ! {
     // free that is REFUSED rather than quietly handing the same bytes to two owners. ----
     // SAFETY: called once, before any allocation, on the single core this rung runs on.
     unsafe { ALLOCATOR.init() };
+    uart.write_line("M2b: allocator initialised (arena handed to the free list)");
     {
         use alloc::vec::Vec;
         let mut cue_list: Vec<u32> = Vec::new();
@@ -107,9 +108,11 @@ pub extern "C" fn kmain() -> ! {
         // 8 cues pushed, capacity is the allocator's business
         uart.write_line("8 cues allocated through the Core's own allocator");
 
+        uart.write_line("M2b: 8 pushes through the global allocator returned");
         let first = cue_list.as_ptr() as usize;
         drop(cue_list);
 
+        uart.write_line("M2b: the cue list was dropped");
         let mut second: Vec<u32> = Vec::with_capacity(8);
         second.push(7);
         let reused = second.as_ptr() as usize == first;
