@@ -154,6 +154,9 @@ global_asm!(
     .section .text.head, "ax"
     .balign 8
 image_header:
+    /* code0 and code1: the protocol has TWO 4-byte branch fields before text_offset. Measured: with one, the
+       ARM\x64 marker landed at offset 52 and the image was refused — four bytes of arithmetic, not a mystery. */
+    b       _start
     b       _start
     .quad   0x80000
     .quad   0
