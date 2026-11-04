@@ -236,6 +236,17 @@ pub extern "C" fn irq_handler() {
     unsafe { gic::handle() };
 }
 
+/// The second task's entry: it prints once and halts, which is enough to prove it was ever run.
+#[unsafe(no_mangle)]
+pub extern "C" fn task_second_entry() {
+    let uart = Uart::at(UART_QEMU_VIRT);
+    uart.write_line("TASK B: running on its own stack — the switch reached it");
+    loop {
+        // SAFETY: a task with nothing to do waits.
+        unsafe { core::arch::asm!("wfe", options(nomem, nostack)) };
+    }
+}
+
 /// Where an aborted task leaves the machine: the Core's stack is back, the violation is already written, and the boot
 /// carries on. This never returns, which is why the switch needs to park only a stack pointer.
 extern "C" fn after_task_aborted() -> ! {
@@ -305,6 +316,29 @@ pub extern "C" fn kmain() -> ! {
     uart.write_str("SCHED: switches recorded: 0x");
     uart.write_hex(scheduler.switches());
     uart.write_line("");
+
+    // Build a task frame and CHECK IT before anything could jump to it. A frame that is wrong is a hang with no
+    // output, so its two resumption slots are printed: the entry address and the PSTATE the task will start in.
+    let task_region_top = {
+        let (bottom, _) = task::region();
+        let _ = bottom;
+        let stack = core::ptr::addr_of!(sched::TASK_B_STACK) as usize;
+        stack + core::mem::size_of::<sched::TaskStack>()
+    };
+    let frame = sched::install_frame(task_region_top, task_second_entry as usize);
+    let (elr, spsr) = sched::frame_state(frame);
+    uart.write_str("SCHED: a task frame at 0x");
+    uart.write_hex(frame as u64);
+    uart.write_str(" resumes at 0x");
+    uart.write_hex(elr);
+    uart.write_str(" in PSTATE 0x");
+    uart.write_hex(spsr);
+    uart.write_line("");
+    if elr == task_second_entry as u64 && spsr == sched::SPSR_EL1H_UNMASKED {
+        uart.write_line("SCHED: the frame is resumable — entry and PSTATE are what a switch must load");
+    } else {
+        uart.write_line("SCHED: FAIL the frame's resumption slots are wrong");
+    }
 
     // ---- M5a: the machine's clock. The counter every deadline will be measured against. ----
     let freq = clock::frequency();

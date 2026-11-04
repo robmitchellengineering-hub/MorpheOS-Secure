@@ -12,6 +12,54 @@
 //! WHAT IT IS NOT: no priorities (M5d), no deadlines, no blocking, no more than two tasks. A real-time class needs a
 //! budget, and a budget needs the certificate (M7a) to be more than an assertion.
 
+/// A task's saved frame, in the layout the interrupt path saves: 31 registers at 0..240, `x30` at 240,
+/// `ELR_EL1` at 248, `SPSR_EL1` at 256, 288 bytes total (16-byte aligned).
+pub const FRAME_WORDS: usize = 288 / 8;
+pub const ELR_SLOT: usize = 248 / 8;
+pub const SPSR_SLOT: usize = 256 / 8;
+
+/// The PSTATE a task starts in: EL1h with interrupts enabled. Getting this wrong is how a first switch dies — an
+/// SPSR of zero puts the CPU in EL0 with interrupts masked, and nothing afterwards makes sense.
+pub const SPSR_EL1H_UNMASKED: u64 = 0b00101;
+
+/// Build a frame for a task that has never run: every register zero, `x30` unused, `ELR` pointed at the entry and
+/// `SPSR` set to "EL1h, interrupts on". Returns the stack pointer the switch must restore from — the frame itself.
+///
+/// This exists separately from the switch so that the frame can be inspected before anything jumps to it: a frame
+/// that is wrong is a hang with no output, and a hang with no output is the most expensive failure this project has.
+pub fn install_frame(stack_top: usize, entry: usize) -> usize {
+    let frame = (stack_top - FRAME_WORDS * 8) & !0xf;
+    // SAFETY: the caller guarantees `stack_top` is the top of a writable stack at least 288 bytes deep, and nothing
+    // else is using it.
+    unsafe {
+        let words = frame as *mut u64;
+        for i in 0..FRAME_WORDS {
+            core::ptr::write_volatile(words.add(i), 0);
+        }
+        core::ptr::write_volatile(words.add(ELR_SLOT), entry as u64);
+        core::ptr::write_volatile(words.add(SPSR_SLOT), SPSR_EL1H_UNMASKED);
+    }
+    frame
+}
+
+/// What `install_frame` put in the two slots that make a frame resumable. Read back by the boot so the frame is
+/// checked before anything jumps to it.
+pub fn frame_state(frame: usize) -> (u64, u64) {
+    // SAFETY: the frame was built by `install_frame` and is inside a task stack.
+    unsafe {
+        let words = frame as *const u64;
+        (
+            core::ptr::read_volatile(words.add(ELR_SLOT)),
+            core::ptr::read_volatile(words.add(SPSR_SLOT)),
+        )
+    }
+}
+
+/// The second task's stack. A static, because a task's stack must exist before its frame can point into it.
+#[repr(align(16))]
+pub struct TaskStack(pub [u8; 16 * 1024]);
+pub static mut TASK_B_STACK: TaskStack = TaskStack([0; 16 * 1024]);
+
 /// The tasks this rung knows about. Two is enough to prove a choice is being made.
 pub const TASKS: usize = 2;
 
