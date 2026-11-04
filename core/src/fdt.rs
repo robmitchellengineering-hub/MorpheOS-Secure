@@ -42,6 +42,62 @@ fn read_u32(ptr: *const u8, offset: usize) -> u32 {
     unsafe { u32::from_be(core::ptr::read_unaligned(ptr.add(offset).cast::<u32>())) }
 }
 
+/// Walk the tree and report every node's name and every property name, bounded. This exists because a walker that
+/// finds nothing gives no evidence: the dump turns "not found" into "here is what the firmware actually passes".
+pub fn debug_dump(blob: usize, mut out: impl FnMut(&[u8], &[u8])) {
+    if blob == 0 {
+        return;
+    }
+    let base = blob as *const u8;
+    if read_u32(base, 0) != FDT_MAGIC {
+        return;
+    }
+    let total = read_u32(base, 4) as usize;
+    if total < 64 || total > 0x20_0000 {
+        return;
+    }
+    let off_struct = read_u32(base, 8) as usize;
+    let off_strings = read_u32(base, 12) as usize;
+    let mut cursor = off_struct;
+    let mut node: &[u8] = b"";
+    let mut seen = 0usize;
+    while cursor + 4 <= total && seen < 64 {
+        let token = read_u32(base, cursor);
+        cursor += 4;
+        match token {
+            FDT_BEGIN_NODE => {
+                let start = cursor;
+                while cursor < total && unsafe { *base.add(cursor) } != 0 {
+                    cursor += 1;
+                }
+                // SAFETY: the name lies between start and cursor, both inside the blob.
+                node = unsafe { core::slice::from_raw_parts(base.add(start), cursor - start) };
+                cursor += 1;
+                cursor = (cursor + 3) & !3;
+            }
+            FDT_PROP => {
+                let len = read_u32(base, cursor) as usize;
+                let name_off = read_u32(base, cursor + 4) as usize;
+                cursor += 8;
+                if off_strings + name_off < total {
+                    let mut end = off_strings + name_off;
+                    while end < total && unsafe { *base.add(end) } != 0 {
+                        end += 1;
+                    }
+                    // SAFETY: the name lies inside the strings block, which was checked.
+                    let name = unsafe { core::slice::from_raw_parts(base.add(off_strings + name_off), end - off_strings - name_off) };
+                    out(node, name);
+                    seen += 1;
+                }
+                cursor += (len + 3) & !3;
+            }
+            FDT_END_NODE | FDT_NOP => {}
+            FDT_END => break,
+            _ => break,
+        }
+    }
+}
+
 /// Walk the tree looking for a node whose `compatible` contains `wanted`, and return its `reg` cells.
 ///
 /// `blob` is the pointer the firmware passed in `x0`; `total` is the blob's declared total size.

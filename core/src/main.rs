@@ -429,6 +429,23 @@ pub extern "C" fn kmain() -> ! {
         l.push_str("FDT: the firmware's device tree is at ");
         l.push_hex(dtb as u64);
         l.flush(&uart);
+        // What the firmware actually passes, printed before any conclusion is drawn from it.
+        let mut shown = 0;
+        fdt::debug_dump(dtb, |node, prop| {
+            if shown < 24 {
+                shown += 1;
+                let mut l = uart::LineBuf::new();
+                l.push_str("FDT-DUMP: ");
+                for b in node {
+                    l.push_byte(if *b >= 0x20 && *b < 0x7f { *b } else { b'?' });
+                }
+                l.push_str(" . ");
+                for b in prop {
+                    l.push_byte(if *b >= 0x20 && *b < 0x7f { *b } else { b'?' });
+                }
+                l.flush(&uart);
+            }
+        });
         match fdt::find_compatible(dtb, "arm,pl011") {
             Ok(a) => {
                 let mut l = uart::LineBuf::new();
