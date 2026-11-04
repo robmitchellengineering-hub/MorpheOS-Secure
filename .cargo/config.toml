@@ -4,10 +4,11 @@ target = "x86_64-unknown-none"
 [target.x86_64-unknown-none]
 # A Core is not a program: no start files, no default linker script, no PIE. The linker script is ours and lives
 # beside the crate it lays out.
+# NOTE: `rust-lld` is the linker for this target and it does not take gcc's `-nostartfiles`; that flag cost the
+# first build on a Linux node. The start file is absent because the target has none and the linker script sets the
+# entry point — `ENTRY(_start)` in core/linker.ld.
 rustflags = [
-    "-C", "link-arg=-nostartfiles",
     "-C", "link-arg=-Tcore/linker.ld",
-    "-C", "link-arg=-static",
     "-C", "link-arg=-no-pie",
     "-C", "relocation-model=static",
     "-C", "panic=abort",
