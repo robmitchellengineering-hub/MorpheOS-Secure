@@ -28,6 +28,7 @@ mod box_admission;
 mod cap;
 mod cert;
 mod clock;
+mod fdt;
 mod gic;
 mod sched;
 mod ledger;
@@ -40,6 +41,10 @@ use ledger::Ledger;
 #[global_allocator]
 static ALLOCATOR: heap::FirstFit = heap::FirstFit::new();
 use uart::{Uart, UART_QEMU_VIRT};
+
+/// The device tree blob the firmware passed in `x0`, kept so the reader can be asked what the machine is.
+#[unsafe(no_mangle)]
+pub static mut DTB_POINTER: usize = 0;
 
 /// The line M0 asserts. One place, so the test and the Core cannot disagree.
 pub const BANNER: &str = "MORPHEOS-CORE 0.0.1: the Core is running on aarch64; no Linux, no syscalls, no processes";
@@ -146,7 +151,25 @@ global_asm!(
 
     .section .text.entry, "ax"
     .global _start
+    .section .text.head, "ax"
+    .balign 8
+image_header:
+    /* code0 and code1: the protocol has TWO 4-byte branch fields before text_offset. Measured: with one, the
+       ARM\x64 marker landed at offset 52 and the image was refused — four bytes of arithmetic, not a mystery. */
+    b       _start
+    b       _start
+    .quad   0x80000
+    .quad   0
+    .quad   3
+    .quad   0
+    .quad   0
+    .quad   0
+    .int    0x644d5241
+    .balign 8
 _start:
+    adrp x1, DTB_POINTER
+    add  x1, x1, :lo12:DTB_POINTER
+    str  x0, [x1]
     /* The stack the linker script reserved. AArch64 requires sp to stay 16-byte aligned. */
     adrp x0, stack_top
     add  x0, x0, :lo12:stack_top
@@ -369,6 +392,35 @@ fn boot_epilogue(uart: &Uart) {
     task_a_entry(&uart);
 }
 
+/// The device tree demonstration, run ONLY when the firmware actually passed a tree. Measured: running it on every boot
+/// turned the preemption gate red, because the fifteen ELF gates have no tree and the demo still took the console at a
+/// moment their own two-task demo wanted it. A gate's environment must be identical to the one it was proven in.
+fn fdt_demo(uart: &Uart) {
+
+    let dtb = unsafe { DTB_POINTER };
+    let mut l = uart::LineBuf::new();
+    l.push_str("FDT: the firmware's device tree is at ");
+    l.push_hex(dtb as u64);
+    l.flush(&uart);
+    match fdt::find_compatible(dtb, "arm,pl011") {
+        Ok(a) => {
+            let mut l = uart::LineBuf::new();
+            l.push_str("FDT: arm,pl011 at ");
+            l.push_hex(a.base);
+            l.push_str(" — the constant this boot uses is ");
+            l.push_hex(uart::UART_QEMU_VIRT as u64);
+            l.flush(&uart);
+            if a.base == uart::UART_QEMU_VIRT as u64 {
+                uart.write_line("FDT: the tree AGREES with the constant — on the Pi the tree wins");
+            } else {
+                uart.write_line("FDT: the tree DISAGREES with the constant — the tree is right");
+            }
+        }
+        Err(_) => uart.write_line("FDT: FAIL no arm,pl011 node was found in the tree"),
+    }
+
+}
+
 /// The Core's first instruction in Rust.
 #[unsafe(no_mangle)]
 pub extern "C" fn kmain() -> ! {
@@ -409,6 +461,12 @@ pub extern "C" fn kmain() -> ! {
         line.push_str(" tasks expected, counter at ");
         line.push_hex(0x2a);
         line.flush(&uart);
+    }
+
+    // ---- M0b: ask the MACHINE where its UART is. Only the Image path has a tree; every ELF gate behaves exactly as
+    // it did before this was written. ----
+    if unsafe { DTB_POINTER } != 0 {
+        fdt_demo(&uart);
     }
 
     // ---- M7d: a box is validated ONCE at load. If its claim holds, it runs without a mask per access — which is the

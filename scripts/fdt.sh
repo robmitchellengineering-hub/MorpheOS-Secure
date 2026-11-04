@@ -1,0 +1,75 @@
+#!/usr/bin/env bash
+# scripts/fdt.sh — the M0b-preparation falsifier: does the Core read the UART's address from the firmware's device tree?
+set -uo pipefail
+cd "$(dirname "$0")/.."
+export PATH="$HOME/.cargo/bin:$PATH"
+MODE=${1:-check}
+WORK=${FDT_WORK:-target/fdt}
+case "$MODE" in --self-test) WORK="$WORK/selftest" ;; *) WORK="$WORK/check" ;; esac
+case "$MODE" in check|--self-test) ;; *) echo "usage: fdt.sh [--self-test]" >&2; exit 2 ;; esac
+command -v cargo >/dev/null 2>&1 || { echo "REFUSED: no cargo here" >&2; exit 2; }
+command -v qemu-system-aarch64 >/dev/null 2>&1 || { echo "REFUSED: no qemu-system-aarch64 here" >&2; exit 2; }
+FEATURES=""
+if [ "$MODE" = "--self-test" ]; then FEATURES="--features fdt-mutant-skip-walk"; fi
+export CARGO_TARGET_DIR="$WORK/target"
+echo "== building the Core (FDT)${FEATURES:+ $FEATURES}"
+# shellcheck disable=SC2086
+cargo build -q -p morph-core --target aarch64-unknown-none --release $FEATURES || { echo "FAIL: the Core did not build" >&2; exit 1; }
+ELF="$WORK/target/aarch64-unknown-none/release/morph-core"
+LOG="$WORK/serial.log"; mkdir -p "$WORK"; rm -f "$LOG"
+# THE IMAGE PATH: a bare ELF gets no device tree in x0 (measured: x0 == 0), so this gate converts the same binary to an
+# arm64 Image and boots THAT. The header is in the source; objcopy makes the flat image the firmware protocol expects.
+IMG="$WORK/morph-core.img"
+# THE IMAGE IS EXTRACTED FROM THE ELF BY HAND. Measured twice: host objcopy cannot read an aarch64 ELF ("Unable to
+# recognise the format"), and this node has no llvm-objcopy. Parsing the program headers is a dozen lines and needs no
+# tool at all, which is the honest answer for a machine that may be as bare as the one this Core will run on.
+python3 - "$ELF" "$IMG" <<'PATCH'
+import struct, sys
+elf_path, img_path = sys.argv[1], sys.argv[2]
+data = open(elf_path, 'rb').read()
+if data[:4] != b'\x7fELF' or data[4] != 2:
+    sys.exit("not a 64-bit ELF")
+machine = struct.unpack_from('<H', data, 18)[0]
+if machine != 183:
+    sys.exit(f"not aarch64 (e_machine={machine})")
+phoff = struct.unpack_from('<Q', data, 32)[0]
+phentsize = struct.unpack_from('<H', data, 54)[0]
+phnum = struct.unpack_from('<H', data, 56)[0]
+segments = []
+for i in range(phnum):
+    off = phoff + i * phentsize
+    p_type, = struct.unpack_from('<I', data, off)
+    p_offset, p_vaddr, p_paddr, p_filesz = struct.unpack_from('<QQQQ', data, off + 8)
+    if p_type == 1 and p_filesz:          # PT_LOAD
+        segments.append((p_vaddr, p_offset, p_filesz))
+if not segments:
+    sys.exit("no loadable segments")
+base = min(v for v, _, _ in segments)
+end = max(v + n for v, _, n in segments)
+image = bytearray(end - base)
+for vaddr, offset, filesz in segments:
+    image[vaddr - base : vaddr - base + filesz] = data[offset : offset + filesz]
+# image_size is a field the boot protocol reads, where zero is not a valid Image: patched from the length.
+magic = struct.unpack_from('<I', image, 56)[0]
+if magic != 0x644d5241:
+    sys.exit("the image does not carry the ARM\\x64 marker")
+struct.pack_into('<Q', image, 16, len(image))
+open(img_path, 'wb').write(bytes(image))
+print(f"image {len(image)} bytes, base 0x{base:x}")
+PATCH
+[ -s "$IMG" ] || { echo "FAIL: the Image was not written" >&2; exit 1; }
+
+timeout "${FDT_TIMEOUT:-25}" qemu-system-aarch64 -M virt -cpu cortex-a76 -m 256M \
+    -kernel "$IMG" -nographic -monitor none -serial stdio > "$LOG" 2>&1
+echo "== what the Core wrote (FDT lines)"
+sed -e 's/\r$//' "$LOG" | grep -E "^FDT:" | head -5
+AGREE="FDT: the tree AGREES with the constant — on the Pi the tree wins"
+if [ "$MODE" = "--self-test" ]; then
+    grep -qF "$AGREE" "$LOG" && { echo "FAIL (self-test): the walk was disabled and the tree still answered" >&2; exit 1; }
+    grep -qF "FDT: FAIL no arm,pl011 node was found in the tree" "$LOG" || { echo "FAIL (self-test): the disabled walk did not report" >&2; exit 1; }
+    echo "ok (self-test): with the walk disabled there is no answer, so the address comes from the firmware's tree"
+    exit 0
+fi
+grep -qF "FDT: FAIL" "$LOG" && { echo "FAIL: the Core reported its own failure" >&2; exit 1; }
+grep -qF "$AGREE" "$LOG" || { echo "FAIL: the device tree did not agree with the constant this boot uses" >&2; exit 1; }
+echo "ok: the UART's address was read from the firmware's device tree, and it matches what the boot uses"
