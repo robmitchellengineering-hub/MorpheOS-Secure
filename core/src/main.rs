@@ -418,9 +418,9 @@ pub extern "C" fn kmain() -> ! {
         match cap::derive(full, cap::Rights::READ) {
             Ok(c) => {
                 let mut l = uart::LineBuf::new();
-                l.push_str("CAP: derived rights 0x");
+                l.push_str("CAP: derived rights ");
                 l.push_hex(c.rights.0 as u64);
-                l.push_str(" from 0x");
+                l.push_str(" from ");
                 l.push_hex(full.rights.0 as u64);
                 l.push_str(" — narrower, allowed");
                 l.flush(&uart);
@@ -431,9 +431,9 @@ pub extern "C" fn kmain() -> ! {
         match cap::derive(full, wanted) {
             Err(w) => {
                 let mut l = uart::LineBuf::new();
-                l.push_str("CAP: REFUSED widening to 0x");
+                l.push_str("CAP: REFUSED widening to ");
                 l.push_hex(w.wanted.0 as u64);
-                l.push_str(" — held only 0x");
+                l.push_str(" — held only ");
                 l.push_hex(w.held.0 as u64);
                 l.flush(&uart);
             }
