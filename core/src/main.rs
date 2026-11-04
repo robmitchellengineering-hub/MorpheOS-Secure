@@ -313,7 +313,7 @@ pub extern "C" fn kmain() -> ! {
     let arrived = gic::ticks();
     let irq_ns = clock::ns_between(irq_start, clock::now());
     // SAFETY: mask interrupts again so the rest of the boot is deterministic.
-    unsafe { core::arch::asm!("msr daifset, {0}", in(reg) 2u64, options(nostack)) };
+    unsafe { core::arch::asm!("msr daifset, #2", options(nostack)) };
     if arrived >= 3 {
         uart.write_str("TICK: the Core was INTERRUPTED 0x");
         uart.write_hex(arrived);

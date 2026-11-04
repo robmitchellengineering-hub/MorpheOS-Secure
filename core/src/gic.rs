@@ -63,7 +63,7 @@ pub fn init() {
 /// Unmask IRQs on this CPU. Without this the GIC is configured and nothing ever arrives.
 pub fn unmask() {
     // SAFETY: clearing DAIF.I at EL1 is exactly "take interrupts".
-    unsafe { asm!("msr daifclr, {0}", in(reg) 2u64, options(nostack)) };
+    unsafe { asm!("msr daifclr, #2", options(nostack)) };
 }
 
 /// Acknowledge the interrupt, count it, and re-arm the timer. Returns the INTID for the log.
