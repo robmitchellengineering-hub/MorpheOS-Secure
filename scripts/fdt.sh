@@ -23,6 +23,19 @@ IMG="$WORK/morph-core.img"
 if ! objcopy -O binary "$ELF" "$IMG"; then
     echo "FAIL: could not make the Image" >&2; exit 1
 fi
+# image_size is a field the boot protocol reads, and a zero there is not a valid Image. It is patched here from the
+# image's own length rather than guessed: offset 8 text_offset, 16 image_size, both little-endian 64-bit.
+python3 - "$IMG" <<'PATCH'
+import struct, sys
+path = sys.argv[1]
+data = bytearray(open(path, 'rb').read())
+magic = struct.unpack_from('<I', data, 56)[0]
+if magic != 0x644d5241:
+    sys.exit("the image does not carry the ARM\x64 marker")
+struct.pack_into('<Q', data, 16, len(data))
+open(path, 'wb').write(data)
+print(f"image_size = {len(data)}")
+PATCH
 timeout "${FDT_TIMEOUT:-25}" qemu-system-aarch64 -M virt -cpu cortex-a76 -m 256M \
     -kernel "$IMG" -nographic -monitor none -serial stdio > "$LOG" 2>&1
 echo "== what the Core wrote (FDT lines)"
