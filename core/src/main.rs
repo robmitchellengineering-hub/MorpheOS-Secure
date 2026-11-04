@@ -145,6 +145,96 @@ _start:
      * an off-by-one. */
     .balign 2048
 vectors:
+    /* EVERY ENTRY IS FOUR BYTES. The architecture requires entries exactly 128 bytes apart, and an earlier version
+     * put a 250-byte handler body in each slot: the .balign then pushed everything out of shape and entry 5 landed
+     * inside a body. The symptom was an interrupt that never returned and never printed. Entries are branches; the
+     * bodies live outside the table, once each. */
+    .balign 128
+    b fault_entry
+    .balign 128
+    b fault_entry
+    .balign 128
+    b fault_entry
+    .balign 128
+    b fault_entry
+    .balign 128
+    b fault_entry
+    .balign 128
+    b irq_entry
+    .balign 128
+    b fault_entry
+    .balign 128
+    b fault_entry
+    .balign 128
+    b fault_entry
+    .balign 128
+    b fault_entry
+    .balign 128
+    b fault_entry
+    .balign 128
+    b fault_entry
+    .balign 128
+    b fault_entry
+    .balign 128
+    b fault_entry
+    .balign 128
+    b fault_entry
+    .balign 128
+    b fault_entry
+
+fault_entry:
+    SAVE_ALL
+    mrs x0, esr_el1
+    mrs x1, far_el1
+    mrs x2, elr_el1
+    bl  exc_report
+    RESTORE_ALL
+    eret
+
+irq_entry:
+    SAVE_ALL
+    bl  irq_handler
+    RESTORE_ALL
+    eret
+
+    .endm
+
+    .section .text.entry, "ax"
+    .global _start
+_start:
+    /* The stack the linker script reserved. AArch64 requires sp to stay 16-byte aligned. */
+    adrp x0, stack_top
+    add  x0, x0, :lo12:stack_top
+    mov  sp, x0
+
+    /* Interrupts off until the GIC is ready; FP/SIMD on, because the compiler emits it for ordinary copies. */
+    msr daifset, #0xf
+
+    /* Run on SP_EL1 explicitly. The IRQ vector entry (entry 5) stacks on SP_ELx, so if the main code were running on
+     * SP_EL0 the interrupt would push to whatever SP_EL1 happens to be — zero at reset — and fault immediately. That
+     * is exactly the symptom: unmask, and the boot never prints the next line. */
+    msr spsel, #1
+
+    mrs x0, cpacr_el1
+    orr x0, x0, #(3 << 20)
+    msr cpacr_el1, x0
+    isb
+
+    /* VBAR_EL1 must be 2 KiB aligned. */
+    adrp x0, vectors
+    add  x0, x0, :lo12:vectors
+    msr vbar_el1, x0
+    isb
+
+    bl   kmain
+1:  wfe
+    b    1b
+
+    /* The vector table, in architecture order: 0-4 faults (EL1t group), 5 IRQ (EL1h), 6-15 faults.
+     * Entry 5 is the one this machine's timer arrives on, and it is written out rather than looped so it cannot be
+     * an off-by-one. */
+    .balign 2048
+vectors:
     FAULT_ENTRY
     FAULT_ENTRY
     FAULT_ENTRY
