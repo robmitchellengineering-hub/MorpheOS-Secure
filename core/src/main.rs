@@ -183,7 +183,7 @@ pub extern "C" fn kmain() -> ! {
 
     // The guard: read memory we never mapped. This MUST fault, and the handler must survive it.
     uart.write_line("MMU: touching the unmapped guard page 0x50000000, which must fault");
-    let phantom = unsafe { core::ptr::read_volatile(0x5000_0000 as *const u64) };
+    let phantom = unsafe { core::ptr::read_volatile(0x4F00_0000 as *const u64) };
     // Either the read faulted (and the handler recorded it) or it succeeded — and a successful read of an unmapped
     // page is the failure. The two paths are told apart by the flag, not by whether a line was printed.
     if PROBE_FAULTED.load(core::sync::atomic::Ordering::SeqCst) {
@@ -302,7 +302,7 @@ pub extern "C" fn exc_report(esr: u64, far: u64, elr: u64) {
             uart.write_line("  cause: data abort — see FAR above for the address that faulted");
         }
     }
-    // THE ONE FAULT THAT IS EXPECTED. The guard probe reads 0x5000_0000, which is deliberately unmapped; the handler
+    // THE ONE FAULT THAT IS EXPECTED. The guard probe reads 0x4F00_0000, which is deliberately unmapped; the handler
     // recognises that address, says so, and resumes after the faulting instruction (a load is 4 bytes). Everything
     // else is fatal. This is containment demonstrated: the Core touched memory it did not map, the machine reported
     // it precisely, and the machine kept running.
