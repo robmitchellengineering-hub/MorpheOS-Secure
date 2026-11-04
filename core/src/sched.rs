@@ -60,6 +60,63 @@ pub fn frame_state(frame: usize) -> (u64, u64) {
 pub struct TaskStack(pub [u8; 16 * 1024]);
 pub static mut TASK_B_STACK: TaskStack = TaskStack([0; 16 * 1024]);
 
+/// Where each task's saved frame lives. A frame is a stack pointer: the scheduler stores the outgoing one and returns
+/// the incoming one, which is the whole of a switch on this machine.
+pub static mut CTX: [usize; 2] = [0; 2];
+
+/// Which task is running. Only meaningful once switching is enabled.
+pub static mut CURRENT: usize = 0;
+
+/// Switching is ordered by the boot, not by the interrupt, so that it cannot start before the second task's frame
+/// exists — a switch to a zero frame is a jump to address zero, which is a hang with no output.
+pub static mut SWITCHING: bool = false;
+
+pub fn enable_switching() {
+    // SAFETY: ordered by the boot on one core with interrupts masked.
+    unsafe { SWITCHING = true };
+}
+
+pub fn switching() -> bool {
+    // SAFETY: read-only here.
+    unsafe { core::ptr::read_volatile(core::ptr::addr_of!(SWITCHING)) }
+}
+
+/// The interrupt path's decision: record the frame that was interrupted, and return the frame to resume from.
+///
+/// With switching off it returns `sp` unchanged — identical to before this existed, which is how it is measured. With
+/// switching on and the other task's frame present, it records and returns the other task's: that is a context
+/// switch, in two stores and a load.
+pub fn on_irq(sp: usize) -> usize {
+    if !switching() {
+        return sp;
+    }
+    // SAFETY: single core, interrupts masked in the handler, and only the handler and the boot touch these.
+    unsafe {
+        let cur = core::ptr::read_volatile(core::ptr::addr_of!(CURRENT));
+        let ctx = core::ptr::addr_of_mut!(CTX) as *mut usize;
+        core::ptr::write_volatile(ctx.add(cur), sp);
+
+        let next = (cur + 1) % 2;
+        let incoming = core::ptr::read_volatile(ctx.add(next));
+        if incoming == 0 {
+            // The other task has no frame yet. Running the same task again is the honest answer; switching to zero
+            // would be a jump into nothing.
+            return sp;
+        }
+        core::ptr::write_volatile(core::ptr::addr_of_mut!(CURRENT), next);
+        incoming
+    }
+}
+
+/// Install the first task's own frame, so that the very first switch has somewhere to come back to.
+pub fn record_current(sp: usize) {
+    // SAFETY: ordered by the boot before switching is enabled.
+    unsafe {
+        let ctx = core::ptr::addr_of_mut!(CTX) as *mut usize;
+        core::ptr::write_volatile(ctx, sp);
+    }
+}
+
 /// The tasks this rung knows about. Two is enough to prove a choice is being made.
 pub const TASKS: usize = 2;
 
