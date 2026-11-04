@@ -52,7 +52,8 @@ static PROBE_FAULTED: core::sync::atomic::AtomicBool = core::sync::atomic::Atomi
 // and it is the only assembly the Core needs on this rung.
 global_asm!(
     r#"
-    .intel_syntax noprefix
+    /* aarch64 assembly. NOTE: `.intel_syntax noprefix` used to sit here, copied from the x86 loader — it is an
+     * x86 directive and on aarch64 it is an unknown directive, so the whole block fails to assemble. */
 
     /* Save and restore every general register and lr. A handler is ordinary Rust and is entitled to clobber
      * x0-x18, so anything less than all of them gives the resumed code garbage. */
