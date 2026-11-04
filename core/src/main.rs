@@ -59,7 +59,7 @@ global_asm!(
     /* Save and restore every general register and lr. A handler is ordinary Rust and is entitled to clobber
      * x0-x18, so anything less than all of them gives the resumed code garbage. */
     .macro SAVE_ALL
-    sub sp, sp, #256
+    sub sp, sp, #288
     stp x0, x1, [sp, #0]
     stp x2, x3, [sp, #16]
     stp x4, x5, [sp, #32]
@@ -76,6 +76,10 @@ global_asm!(
     stp x26, x27, [sp, #208]
     stp x28, x29, [sp, #224]
     str x30, [sp, #240]
+    mrs x9, elr_el1
+    str x9, [sp, #248]
+    mrs x9, spsr_el1
+    str x9, [sp, #256]
     .endm
 
     .macro RESTORE_ALL
@@ -95,7 +99,7 @@ global_asm!(
     ldp x26, x27, [sp, #208]
     ldp x28, x29, [sp, #224]
     ldr x30, [sp, #240]
-    add sp, sp, #256
+    add sp, sp, #288
     .endm
 
     /* The fault path: name the fault, and return (the handler decides whether a return is allowed). */
