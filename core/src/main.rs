@@ -138,6 +138,8 @@ vectors:
 fn task_entry() -> u64 {
     // A local array large enough to sit well inside the task's stack, and written so the stack is genuinely used.
     let mut buffer = [0u8; 2048];
+    // Record where this frame actually is, so the Core can judge it rather than trust the narrative.
+    unsafe { task::TASK_STACK_SEEN = core::ptr::addr_of!(buffer) as usize };
     buffer[0] = 0xA5;
     buffer[2047] = 0x5A;
     let uart = Uart::at(UART_QEMU_VIRT);
@@ -206,11 +208,7 @@ pub extern "C" fn kmain() -> ! {
         uart.write_line("MMU: the Core continued past the guard probe — the fault was caught, the machine did not die");
 
     // ---- M4a: a second execution context. The task runs on its OWN stack, and the Core gets its stack back. ----
-    let task_stack_top = {
-        // SAFETY: the task stack is static and this is the only use of it.
-        let base = core::ptr::addr_of!(task::TASK_STACK) as usize;
-        base + core::mem::size_of::<task::Stack>()
-    };
+    let (task_bottom, task_stack_top) = task::region();
     #[cfg(not(feature = "task-mutant-no-switch"))]
     let stack_for_task = task_stack_top;
     // The mutation: hand the task the Core's own stack, so a task and the Core are the same context. The "own stack"
@@ -224,7 +222,9 @@ pub extern "C" fn kmain() -> ! {
     // SAFETY: the stack is a static 16 KiB region (or, under the mutation, deliberately the wrong one).
     let value = unsafe { task::run(task_entry, stack_for_task) };
     // The task returns buffer[0] + buffer[2047] = 0xA5 + 0x5A, so a correct return is exactly 0xFF.
-    if value == 0xFF {
+    // The judgement: where did the task's stack ACTUALLY sit, compared with the region the Core handed it?
+    let seen = unsafe { task::TASK_STACK_SEEN };
+    if seen >= task_bottom && seen < task_stack_top && value == 0xFF {
         uart.write_line("M4a: the task ran on its own stack and returned to the Core");
     } else {
         uart.write_line("M4a: FAIL the task did not return the value it must");

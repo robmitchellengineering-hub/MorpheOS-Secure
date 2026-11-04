@@ -20,6 +20,16 @@ pub struct Stack(pub [u8; 16 * 1024]);
 
 pub static mut TASK_STACK: Stack = Stack([0; 16 * 1024]);
 
+/// Where the task's stack actually was, recorded by the task itself. The Core compares it against the region it
+/// handed over — that comparison is what makes the "own stack" claim checkable rather than asserted.
+pub static mut TASK_STACK_SEEN: usize = 0;
+
+/// The task stack region as (bottom, top), so a caller can check an address is inside it.
+pub fn region() -> (usize, usize) {
+    let bottom = core::ptr::addr_of!(TASK_STACK) as usize;
+    (bottom, bottom + core::mem::size_of::<Stack>())
+}
+
 /// What a task runs. Returns a value so the Core can check the task actually ran rather than only that it did not
 /// crash.
 pub type Entry = fn() -> u64;
