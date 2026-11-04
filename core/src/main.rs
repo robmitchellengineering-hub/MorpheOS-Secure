@@ -26,6 +26,7 @@ extern crate alloc;
 mod heap;
 mod cap;
 mod ledger;
+mod mmu;
 mod uart;
 use cap::{access, CapTable, Object, ObjectId};
 use ledger::Ledger;
@@ -77,10 +78,17 @@ _start:
 vectors:
     .rept 16
     .balign 128
+    sub sp, sp, #32
+    stp x0, x1, [sp]
+    stp x2, x3, [sp, #16]
     mrs x0, esr_el1
     mrs x1, far_el1
     mrs x2, elr_el1
-    b   exc_report
+    bl  exc_report
+    ldp x2, x3, [sp, #16]
+    ldp x0, x1, [sp]
+    add sp, sp, #32
+    eret
     .endr
 "#
 );
@@ -118,6 +126,29 @@ pub extern "C" fn kmain() -> ! {
     // ---- M2: the ledger. ----
     let mut machine = Ledger::empty();
     ledger::report(&uart, &mut machine);
+
+    // ---- M3a: the MMU. Our page tables, our translation regime, and a guard page that must fault. ----
+    uart.write_line("MMU: building our own tables (Device 0..1G, Normal 0x4000_0000..0x5000_0000, guard at 0x5000_0000)");
+    mmu::build();
+    // SAFETY: the tables are built and the identity map covers this code, the stack and the arena.
+    unsafe { mmu::enable() };
+    uart.write_line("MMU: ENABLED — SCTLR_EL1.M is set, every access is now translated by our tables");
+
+    // A valid access still works: read the banner's first byte through the new translation.
+    let probe = unsafe { core::ptr::read_volatile(BANNER.as_ptr()) };
+    if probe == b'M' {
+        uart.write_line("MMU: a mapped read still works (the banner's first byte is 'M')");
+    } else {
+        uart.write_line("MMU: FAIL a mapped read returned the wrong byte");
+    }
+
+    // The guard: read memory we never mapped. This MUST fault, and the handler must survive it.
+    uart.write_line("MMU: touching the unmapped guard page 0x50000000, which must fault");
+    let phantom = unsafe { core::ptr::read_volatile(0x5000_0000 as *const u64) };
+    uart.write_str("MMU: FAIL the guard page was readable (value ");
+    uart.write_hex(phantom);
+    uart.write_line(") — memory we did not map must not be reachable");
+    uart.write_line("MMU: the Core continued past the guard probe");
 
     // ---- M2b: the memory the machine owns. ----
     // SAFETY: called once, before any allocation, on the single core this rung runs on.
@@ -190,7 +221,7 @@ pub extern "C" fn kmain() -> ! {
 /// one, and `elr` the instruction that was executing. Printing all three is the difference between "it stopped" and
 /// "it faulted reading 0x… at 0x…", and it costs a handful of instructions on a path that has already gone wrong.
 #[unsafe(no_mangle)]
-pub extern "C" fn exc_report(esr: u64, far: u64, elr: u64) -> ! {
+pub extern "C" fn exc_report(esr: u64, far: u64, elr: u64) {
     let uart = Uart::at(UART_QEMU_VIRT);
     uart.init();
     uart.write_line("MORPHEOS-CORE: EXCEPTION — the Core faulted, and this is it reporting rather than stopping");
@@ -227,8 +258,19 @@ pub extern "C" fn exc_report(esr: u64, far: u64, elr: u64) -> ! {
             uart.write_line("  cause: data abort — see FAR above for the address that faulted");
         }
     }
+    // THE ONE FAULT THAT IS EXPECTED. The guard probe reads 0x5000_0000, which is deliberately unmapped; the handler
+    // recognises that address, says so, and resumes after the faulting instruction (a load is 4 bytes). Everything
+    // else is fatal. This is containment demonstrated: the Core touched memory it did not map, the machine reported
+    // it precisely, and the machine kept running.
+    const GUARD: u64 = 0x5000_0000;
+    if far == GUARD {
+        uart.write_line("  MMU: guard page FAULTED as required — 0x50000000 is not mapped, and the Core survived it");
+        // SAFETY: resume after the faulting load.
+        unsafe { core::arch::asm!("msr elr_el1, {0}", in(reg) elr + 4, options(nostack)) };
+        return;
+    }
     loop {
-        // SAFETY: nothing else to do after a fault on this rung.
+        // SAFETY: nothing else to do after an unexpected fault.
         unsafe { core::arch::asm!("wfe", options(nomem, nostack)) };
     }
 }

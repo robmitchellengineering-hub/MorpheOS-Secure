@@ -22,3 +22,5 @@ m2-test-tamper = []
 m2-mutant-skip-verify = []
 # The mutation for M2b's falsifier: accept a double free (the classic way a free list aliases memory).
 m2b-mutant-allow-double-free = []
+# The mutation for M3a: map the guard page too, so the fault that must happen does not.
+mmu-mutant-map-guard = []
