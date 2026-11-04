@@ -24,3 +24,6 @@ m2-mutant-skip-verify = []
 m2b-mutant-allow-double-free = []
 # The mutation for M3a: map the guard page too, so the fault that must happen does not.
 mmu-mutant-map-guard = []
+# The mutation for M4a: do not switch stacks — run the task on the Core's own stack. The task's
+# "own stack" line must then disappear (or the Core's state be corrupted), so the check goes red.
+task-mutant-no-switch = []
