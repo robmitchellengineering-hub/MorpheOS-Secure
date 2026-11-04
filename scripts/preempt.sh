@@ -17,8 +17,8 @@ case "$MODE" in check|--self-test) ;; *) echo "usage: preempt.sh [--self-test]" 
 command -v cargo >/dev/null 2>&1 || { echo "REFUSED: no cargo here" >&2; exit 2; }
 command -v qemu-system-aarch64 >/dev/null 2>&1 || { echo "REFUSED: no qemu-system-aarch64 here" >&2; exit 2; }
 
-FEATURES=""
-if [ "$MODE" = "--self-test" ]; then FEATURES="--features sched-mutant-no-switch"; fi
+FEATURES="--features preempt-demo"
+if [ "$MODE" = "--self-test" ]; then FEATURES="--features preempt-demo,sched-mutant-no-switch"; fi
 
 export CARGO_TARGET_DIR="$WORK/target"
 echo "== building the Core (M5c preemption)${FEATURES:+ $FEATURES}"

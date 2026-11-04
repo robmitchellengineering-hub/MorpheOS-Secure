@@ -344,6 +344,10 @@ extern "C" fn after_task_aborted() -> ! {
     uart.write_line("M4c: TASK ABORTED — the Core resumed on its own stack, the evidence stays, the boot continues");
     uart.write_line(DONE);
 
+    // ---- M5c part four: preemption. GATED: the two-task demo never returns, so it runs only when the gate asks
+    // for it. Every other gate boots exactly as before - which is the property the sweep caught us losing. ----
+    #[cfg(feature = "preempt-demo")]
+    {
     // ---- M5c part four: preemption. Two contexts, one CPU, and the timer choosing between them. ----
     let second_top = {
         let base = core::ptr::addr_of!(sched::TASK_B_STACK) as usize;
@@ -367,6 +371,8 @@ extern "C" fn after_task_aborted() -> ! {
     uart.write_line("PREEMPT: switching enabled and interrupts unmasked — the next tick may move the CPU");
     // From here this context IS task A. It never returns; the timer is the only thing that takes the CPU away.
     task_a_entry(&uart);
+    }
+
 
     // ---- M2: the ledger. ----
     let mut machine = Ledger::empty();
