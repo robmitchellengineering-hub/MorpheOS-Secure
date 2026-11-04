@@ -509,7 +509,10 @@ pub extern "C" fn kmain() -> ! {
     uart.write_line("");
     // The boot's own frame is recorded by the first interrupt, so nothing to do here but turn it on.
     sched::enable_switching();
-    uart.write_line("PREEMPT: switching enabled — the next timer interrupt may move the CPU");
+    // Measured: the interrupt demo at M5b ends by MASKING interrupts for determinism, so task A ran to completion with
+    // no tick at all and no switch happened. Preemption needs them on.
+    gic::unmask();
+    uart.write_line("PREEMPT: switching enabled and interrupts unmasked — the next tick may move the CPU");
     // From here this context IS task A. It never returns; the timer is the only thing that takes the CPU away.
     task_a_entry(&uart);
 
