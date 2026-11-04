@@ -1,7 +1,21 @@
 # CORE — the Core: a capability microkernel, and the only thing in the machine that is trusted
 
-**State: M0 is green.** Measured on `studio-linux2`, 2026-11-04: the Core builds for `aarch64-unknown-none` and
-boots on QEMU `virt` (`-cpu cortex-a76`, the Pi 5's core) with no Linux in the path, writing:
+**State, measured on studio-linux2 (2026-11-04).** Ten rungs are green and merged, each with a falsifier proven
+able to fail:
+
+- **M0** boots on AArch64 (QEMU `virt`, `-cpu cortex-a76`) with no Linux under it and reports itself — PR #1.
+- **M1** authority is an object a task was handed; both directions named; the mutation flips exactly one verdict — PR #2.
+- **M2** the ledger: generations, undo without a reboot, a tampered generation refused — PR #3.
+- **M2b** the allocator: first fit, reuse, a double free refused — PR #3.
+- **M3a** the MMU: our own tables, Device and Normal memory, a guard page that faults and a Core that survives it — PR #5.
+- **M4a** a second execution context on its own stack, judged by the Core — PR #6.
+- **M4b** the task's own address space, with a block that does not exist in it — PR #7.
+- **M4c** a task that oversteps is a dead task, not a dead machine — PR #8.
+- **M5a** the machine's clock: the counter advances, 1 ms honoured in 1.002 ms — PR #9.
+- **M5b** the timer **interrupts** the Core (GICv2, sixteen four-byte vector entries, re-arm before EOI) — PR #11.
+
+**What is NOT done, in the same breath**: the tick is counted, not used — no preemption, no scheduler, no priority
+class. No certificates (M7a–M7d), no network, no storage, no Raspberry Pi. AirMatrix cannot run on this machine yet.
 
 ```
 MORPHEOS-CORE 0.0.1: the Core is running on aarch64; no Linux, no syscalls, no processes
