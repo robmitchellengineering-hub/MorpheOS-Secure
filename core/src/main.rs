@@ -59,7 +59,7 @@ pub extern "C" fn kmain() -> ! {
     // line for DONE and stops the machine — honest, because on rung M0 halting *is* the end of the story.
     loop {
         // SAFETY: `wfe` at EL1 is always legal; it is the correct way for an idle core to wait.
-        unsafe { core::arch::asm!("wfe", options(nomem, nostack, preserves_flags)) };
+        unsafe { core::arch::asm!("wfe", options(nomem, nostack)) };
     }
 }
 
@@ -74,6 +74,6 @@ fn panic(info: &PanicInfo) -> ! {
     }
     loop {
         // SAFETY: as above — a panicked core has nothing to do but wait.
-        unsafe { core::arch::asm!("wfe", options(nomem, nostack, preserves_flags)) };
+        unsafe { core::arch::asm!("wfe", options(nomem, nostack)) };
     }
 }
