@@ -143,22 +143,34 @@ pub extern "C" fn kmain() -> ! {
             uart.write_line("M2b: the freed block was NOT reused — first fit did not take the hole");
         }
 
-        let layout = alloc::alloc::Layout::from_size_align(64, 16).expect("valid layout");
-        // SAFETY: the allocator is initialised, the layout is valid, and the pointer is used once.
-        let p = unsafe { alloc::alloc::alloc(layout) };
-        // SAFETY: p came from the same allocator with the same layout.
-        unsafe { alloc::alloc::dealloc(p, layout) };
-        // SAFETY: this is THE double free — the attack the falsifier runs.
-        unsafe { alloc::alloc::dealloc(p, layout) };
-        let (used, frees, refused) = ALLOCATOR.stats();
-        uart.write_str("M2b: stats used=");
-        uart.write_hex(used as u64);
-        uart.write_str(" frees=");
-        uart.write_hex(frees as u64);
-        uart.write_str(" refused=");
-        uart.write_hex(refused as u64);
+        // The double-free attack, called directly on the allocator so the header is visible. Three numbers:
+        // the address and its magic when handed out, after the first free, and after the second.
+        // SAFETY: the allocator is initialised and the pointer comes from it.
+        let p = unsafe { ALLOCATOR.alloc_block(64) };
+        uart.write_str("M2b: alloc -> ");
+        uart.write_hex(p as u64);
+        uart.write_str(" magic=");
+        uart.write_hex(unsafe { ALLOCATOR.magic_of(p) });
         uart.write_line("");
-        if refused >= 1 {
+
+        // SAFETY: p came from this allocator.
+        let first = unsafe { ALLOCATOR.free_block(p) };
+        uart.write_str("M2b: free#1 -> accepted=");
+        uart.write_hex(u64::from(first));
+        uart.write_str(" magic=");
+        uart.write_hex(unsafe { ALLOCATOR.magic_of(p) });
+        uart.write_line("");
+
+        // SAFETY: this is the attack — the same pointer freed again.
+        let second = unsafe { ALLOCATOR.free_block(p) };
+        uart.write_str("M2b: free#2 -> accepted=");
+        uart.write_hex(u64::from(second));
+        uart.write_str(" magic=");
+        uart.write_hex(unsafe { ALLOCATOR.magic_of(p) });
+        uart.write_line("");
+
+        let (_, _, refused) = ALLOCATOR.stats();
+        if refused >= 1 && !second {
             uart.write_line("M2b: DOUBLE FREE REFUSED — the block was not inserted twice");
         } else {
             uart.write_line("M2b: FAIL a double free was accepted; two owners can now hold the same bytes");

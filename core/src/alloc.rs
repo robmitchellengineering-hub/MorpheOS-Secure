@@ -88,7 +88,7 @@ impl FirstFit {
 
     /// First fit: walk the list, take the first block that is big enough, split it if the remainder can hold a header
     /// plus a useful allocation, and return the payload pointer.
-    unsafe fn alloc_block(&self, size: usize) -> *mut u8 {
+    pub unsafe fn alloc_block(&self, size: usize) -> *mut u8 {
         let st = self.state();
         let want = align_up(size.max(1), 16);
         let mut cursor = unsafe { (*st).head };
@@ -128,7 +128,7 @@ impl FirstFit {
 
     /// Return a block. A block whose magic is not USED is a double free (or a pointer that is not ours), and it is
     /// refused: the block is NOT inserted into the list again, so no two owners can ever be handed the same bytes.
-    unsafe fn free_block(&self, payload: *mut u8) -> bool {
+    pub unsafe fn free_block(&self, payload: *mut u8) -> bool {
         let st = self.state();
         if payload.is_null() {
             return false;
@@ -149,6 +149,13 @@ impl FirstFit {
         unsafe { core::ptr::write_volatile(core::ptr::addr_of_mut!((*header).magic), FREE) };
         unsafe { (*st).frees += 1 };
         true
+    }
+
+    /// The magic of the block owning `payload`, read the same way `free_block` reads it. Exists so a test can show
+    /// three numbers - address and flag at allocate, at the first free, and at the second - instead of guessing.
+    pub unsafe fn magic_of(&self, payload: *mut u8) -> u64 {
+        let header = unsafe { payload.sub(HEADER).cast::<Header>() };
+        unsafe { core::ptr::read_volatile(core::ptr::addr_of!((*header).magic)) }
     }
 
     pub fn stats(&self) -> (usize, usize, usize) {
