@@ -28,6 +28,7 @@ mod box_admission;
 mod cap;
 mod cert;
 mod clock;
+mod fdt;
 mod gic;
 mod sched;
 mod ledger;
