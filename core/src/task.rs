@@ -49,17 +49,53 @@ pub type Entry = fn() -> u64;
 /// `stack_top` must be the top of a writable, 16-byte aligned region at least as large as the entry's stack use, and
 /// the entry must not return into the Core's stack.
 pub unsafe fn run(entry: Entry, stack_top: usize) {
-    // SAFETY note is on the function; the result arrives through TASK_RESULT.
-    // SAFETY: the caller guarantees the stack. x20 holds the Core's sp (x19 is reserved by LLVM and cannot be an asm operand) across the call.
+    // SAFETY: the caller guarantees the stack. Three values are parked in statics so the fault handler can come back
+    // here from a task's violation: the Core's sp, the Core's return address, and the label just after `blr`. The
+    // label is what an abort jumps to; there it restores sp and lr and returns to the Core as if the task had
+    // finished, with the violation already recorded.
+    // SAFETY: the caller guarantees `stack_top` and that the entry does not return into the Core's stack.
     unsafe {
+        let sp_slot = core::ptr::addr_of_mut!(CORE_SP);
+        let lr_slot = core::ptr::addr_of_mut!(CORE_LR);
+        let pc_slot = core::ptr::addr_of_mut!(ABORT_PC);
         core::arch::asm!(
             "mov x20, sp",
+            "str x20, [{sp_slot}]",
+            "str x30, [{lr_slot}]",
+            "adr x21, 1f",
+            "str x21, [{pc_slot}]",
             "mov sp, {stack}",
             "blr {entry}",
+            "1:",
+            "ldr x20, [{sp_slot}]",
             "mov sp, x20",
+            "ldr x30, [{lr_slot}]",
+            "ret",
+            sp_slot = in(reg) sp_slot,
+            lr_slot = in(reg) lr_slot,
+            pc_slot = in(reg) pc_slot,
             stack = in(reg) stack_top,
             entry = in(reg) entry as usize,
-            out("x20") _,
+            out("x20") _, out("x21") _,
+        );
+    }
+}
+
+/// Return to the Core from a faulted task: a task that oversteps is a dead task, not a dead machine.
+///
+/// # Safety
+/// Only valid while a task launched by `run` is executing.
+pub unsafe fn abort_to_core() -> ! {
+    // SAFETY: the statics were written by `run` before the task started, and the abort label restores sp/lr there.
+    unsafe {
+        let sp = CORE_SP;
+        let pc = ABORT_PC;
+        core::arch::asm!(
+            "mov sp, {sp}",
+            "br {pc}",
+            sp = in(reg) sp,
+            pc = in(reg) pc,
+            options(noreturn),
         );
     }
 }
