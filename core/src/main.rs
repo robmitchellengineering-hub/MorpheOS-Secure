@@ -465,6 +465,65 @@ pub extern "C" fn kmain() -> ! {
         uart.write_line(" timer interrupts arrived in 50 ms — the interrupt path is not working");
     }
 
+    // ---- M2b: the memory the machine owns. ----
+    // SAFETY: called once, before any allocation, on the single core this rung runs on.
+    unsafe { ALLOCATOR.init() };
+    uart.write_line("M2b: allocator initialised (arena handed to the free list)");
+    {
+        use alloc::vec::Vec;
+        let mut cue_list: Vec<u32> = Vec::new();
+        for cue in 1..=8u32 {
+            cue_list.push(cue * 1000);
+        }
+        uart.write_line("M2b: 8 pushes through the global allocator returned");
+        let first = cue_list.as_ptr() as usize;
+        drop(cue_list);
+        uart.write_line("M2b: the cue list was dropped");
+
+        let mut second: Vec<u32> = Vec::with_capacity(8);
+        second.push(7);
+        let reused = second.as_ptr() as usize == first;
+        if reused {
+            uart.write_line("M2b: the freed block was reused by the next allocation (first fit, as designed)");
+        } else {
+            uart.write_line("M2b: the freed block was NOT reused — first fit did not take the hole");
+        }
+
+        // The double-free attack, called directly on the allocator so the header is visible. Three numbers:
+        // the address and its magic when handed out, after the first free, and after the second.
+        // SAFETY: the allocator is initialised and the pointer comes from it.
+        let p = unsafe { ALLOCATOR.alloc_block(64) };
+        uart.write_str("M2b: alloc -> ");
+        uart.write_hex(p as u64);
+        uart.write_str(" magic=");
+        uart.write_hex(unsafe { ALLOCATOR.magic_of(p) });
+        uart.write_line("");
+
+        // SAFETY: p came from this allocator.
+        let first = unsafe { ALLOCATOR.free_block(p) };
+        uart.write_str("M2b: free#1 -> accepted=");
+        uart.write_hex(u64::from(first));
+        uart.write_str(" magic=");
+        uart.write_hex(unsafe { ALLOCATOR.magic_of(p) });
+        uart.write_line("");
+
+        // SAFETY: this is the attack — the same pointer freed again.
+        let second = unsafe { ALLOCATOR.free_block(p) };
+        uart.write_str("M2b: free#2 -> accepted=");
+        uart.write_hex(u64::from(second));
+        uart.write_str(" magic=");
+        uart.write_hex(unsafe { ALLOCATOR.magic_of(p) });
+        uart.write_line("");
+
+        let (_, _, refused) = ALLOCATOR.stats();
+        if refused >= 1 && !second {
+            uart.write_line("M2b: DOUBLE FREE REFUSED — the block was not inserted twice");
+        } else {
+            uart.write_line("M2b: FAIL a double free was accepted; two owners can now hold the same bytes");
+        }
+    }
+
+
     // ---- M2: the ledger. ----
     let mut machine = Ledger::empty();
     ledger::report(&uart, &mut machine);
@@ -557,64 +616,6 @@ pub extern "C" fn kmain() -> ! {
         uart.write_str("MMU: FAIL the guard page was readable (value ");
         uart.write_hex(phantom);
         uart.write_line(") — memory we did not map must not be reachable");
-    }
-
-    // ---- M2b: the memory the machine owns. ----
-    // SAFETY: called once, before any allocation, on the single core this rung runs on.
-    unsafe { ALLOCATOR.init() };
-    uart.write_line("M2b: allocator initialised (arena handed to the free list)");
-    {
-        use alloc::vec::Vec;
-        let mut cue_list: Vec<u32> = Vec::new();
-        for cue in 1..=8u32 {
-            cue_list.push(cue * 1000);
-        }
-        uart.write_line("M2b: 8 pushes through the global allocator returned");
-        let first = cue_list.as_ptr() as usize;
-        drop(cue_list);
-        uart.write_line("M2b: the cue list was dropped");
-
-        let mut second: Vec<u32> = Vec::with_capacity(8);
-        second.push(7);
-        let reused = second.as_ptr() as usize == first;
-        if reused {
-            uart.write_line("M2b: the freed block was reused by the next allocation (first fit, as designed)");
-        } else {
-            uart.write_line("M2b: the freed block was NOT reused — first fit did not take the hole");
-        }
-
-        // The double-free attack, called directly on the allocator so the header is visible. Three numbers:
-        // the address and its magic when handed out, after the first free, and after the second.
-        // SAFETY: the allocator is initialised and the pointer comes from it.
-        let p = unsafe { ALLOCATOR.alloc_block(64) };
-        uart.write_str("M2b: alloc -> ");
-        uart.write_hex(p as u64);
-        uart.write_str(" magic=");
-        uart.write_hex(unsafe { ALLOCATOR.magic_of(p) });
-        uart.write_line("");
-
-        // SAFETY: p came from this allocator.
-        let first = unsafe { ALLOCATOR.free_block(p) };
-        uart.write_str("M2b: free#1 -> accepted=");
-        uart.write_hex(u64::from(first));
-        uart.write_str(" magic=");
-        uart.write_hex(unsafe { ALLOCATOR.magic_of(p) });
-        uart.write_line("");
-
-        // SAFETY: this is the attack — the same pointer freed again.
-        let second = unsafe { ALLOCATOR.free_block(p) };
-        uart.write_str("M2b: free#2 -> accepted=");
-        uart.write_hex(u64::from(second));
-        uart.write_str(" magic=");
-        uart.write_hex(unsafe { ALLOCATOR.magic_of(p) });
-        uart.write_line("");
-
-        let (_, _, refused) = ALLOCATOR.stats();
-        if refused >= 1 && !second {
-            uart.write_line("M2b: DOUBLE FREE REFUSED — the block was not inserted twice");
-        } else {
-            uart.write_line("M2b: FAIL a double free was accepted; two owners can now hold the same bytes");
-        }
     }
 
     uart.write_line(DONE);
