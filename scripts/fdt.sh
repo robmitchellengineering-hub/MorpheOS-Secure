@@ -20,7 +20,18 @@ LOG="$WORK/serial.log"; mkdir -p "$WORK"; rm -f "$LOG"
 # THE IMAGE PATH: a bare ELF gets no device tree in x0 (measured: x0 == 0), so this gate converts the same binary to an
 # arm64 Image and boots THAT. The header is in the source; objcopy makes the flat image the firmware protocol expects.
 IMG="$WORK/morph-core.img"
-if ! objcopy -O binary "$ELF" "$IMG"; then
+# HOST OBJCOPY CANNOT READ AN AARCH64 ELF. Measured: "Unable to recognise the format of the input file" while the build
+# was green all along. The LLVM objcopy that ships with the Rust toolchain understands every target it can emit.
+OBJCOPY=$(command -v llvm-objcopy || true)
+if [ -z "$OBJCOPY" ]; then
+    SYSROOT=$(rustc --print sysroot)
+    for candidate in "$SYSROOT"/lib/rustlib/*/bin/llvm-objcopy; do
+        [ -x "$candidate" ] && OBJCOPY="$candidate" && break
+    done
+fi
+[ -n "$OBJCOPY" ] || { echo "REFUSED: no llvm-objcopy to make an Image from an aarch64 ELF" >&2; exit 2; }
+echo "== objcopy: $OBJCOPY"
+if ! "$OBJCOPY" -O binary "$ELF" "$IMG"; then
     echo "FAIL: could not make the Image" >&2; exit 1
 fi
 # image_size is a field the boot protocol reads, and a zero there is not a valid Image. It is patched here from the
