@@ -154,6 +154,18 @@ fn task_entry() -> u64 {
     result
 }
 
+/// Where an aborted task leaves the machine: the Core's stack is back, the violation is already written, and the boot
+/// carries on. This never returns, which is why the switch needs to park only a stack pointer.
+extern "C" fn after_task_aborted() -> ! {
+    let uart = Uart::at(UART_QEMU_VIRT);
+    uart.write_line("M4c: TASK ABORTED — the Core resumed on its own stack, the evidence stays, the boot continues");
+    uart.write_line(DONE);
+    loop {
+        // SAFETY: an aborted task's continuation has nothing to return to on this rung.
+        unsafe { core::arch::asm!("wfe", options(nomem, nostack)) };
+    }
+}
+
 /// The Core's first instruction in Rust.
 #[unsafe(no_mangle)]
 pub extern "C" fn kmain() -> ! {
@@ -212,6 +224,7 @@ pub extern "C" fn kmain() -> ! {
         uart.write_line("MMU: the Core continued past the guard probe — the fault was caught, the machine did not die");
 
     // ---- M4a: a second execution context. The task runs on its OWN stack, and the Core gets its stack back. ----
+    task::set_resume(after_task_aborted);
     let (task_bottom, task_stack_top) = task::region();
     #[cfg(not(feature = "task-mutant-no-switch"))]
     let stack_for_task = task_stack_top;

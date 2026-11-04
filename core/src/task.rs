@@ -1,110 +1,98 @@
-//! Tasks — a second execution context, rung M4a.
+//! Tasks — a second execution context, and what happens when it oversteps.
 //!
-//! THE CLAIM: the Core can hand the CPU to code that runs on **its own stack**, and take it back afterwards. That is
-//! the smallest thing that must be true before a show can run: the audio engine, its control surface and every node
-//! session are separate execution contexts, and none of them may run on the Core's own stack.
+//! Two claims, and they are the two a show depends on:
+//!   1. the Core hands the CPU to code running on **its own stack**, and takes it back (M4a);
+//!   2. if that code does something the machine cannot allow, the **task** dies and the machine continues (M4c).
 //!
-//! WHAT THIS IS NOT YET, said here rather than implied: this is a **stack switch**, not an address-space switch. The
-//! task shares the Core's page tables (M3a's identity map), so it can still name memory the Core owns — the capability
-//! table refuses what it asks the *Core* for, but nothing stops it writing where it likes. Per-task TTBR0 (a real
-//! address space, and the end of that gap) is the next rung, and it is the one that makes M1's refusals containment
-//! for code that is not the Core itself.
+//! The second is what this file exists for now. A task that oversteps is a dead task, not a dead show — and the way
+//! to get there without a scheduler is the smallest mechanism that works: before switching, the Core parks its own
+//! stack pointer and names the function to resume at; the fault handler, recognising a task's violation, gives the
+//! Core its stack back and tail-calls that function. The resume target never returns, so no return address has to be
+//! saved and no label has to be computed inside assembly.
 //!
-//! A task on this rung is a function and a stack. That is enough to prove the switch and to be honest about what is
-//! missing.
+//! An earlier version parked the Core's lr and computed an abort label with `adr` inside inline asm. It broke twice:
+//! once because `in(reg)` operands can be allocated to the very registers the asm template used, and once because the
+//! label's position in the template was not what the surrounding code needed. This version has neither, and that is
+//! the point of rewriting it rather than patching it again.
 
-/// A task's stack. 16 KiB, 16-byte aligned, static: the Core does not yet allocate stacks from the arena because an
-/// allocator that can be asked for a stack during a switch is a new failure mode for a rung that is about switching.
+/// A task's stack. 16 KiB, 16-byte aligned, static.
 #[repr(align(16))]
 pub struct Stack(pub [u8; 16 * 1024]);
 
 pub static mut TASK_STACK: Stack = Stack([0; 16 * 1024]);
 
-/// Where the task's stack actually was, recorded by the task itself. The Core compares it against the region it
-/// handed over — that comparison is what makes the "own stack" claim checkable rather than asserted.
+/// Where the task's frame actually was, recorded by the task. The Core compares it against the region it handed over;
+/// that comparison is what makes "own stack" checkable rather than asserted.
 pub static mut TASK_STACK_SEEN: usize = 0;
 
-/// What the task returned. Passed through a static rather than an asm output: measured, the `lateout("x0")` capture
-/// disagreed with the value the task actually produced, and a switch that also has to marshal its result through a
-/// register constraint is a switch with two ways to be wrong. The task writes it; the Core reads it.
+/// What the task returned. Passed through a static rather than an asm output — an asm output and a task's real return
+/// value disagreed once, and one way to be wrong is enough.
 pub static mut TASK_RESULT: u64 = 0;
 
-/// Where the Core was, and where it resumes, if a task has to be aborted. `run` writes these before the switch; the
-/// fault handler uses them to return to the label just after the task call. That is what makes an abort an abort
-/// rather than a halt: the Core's stack and return address are handed back, and the boot continues.
+/// The Core's stack pointer, parked before a switch and restored by an abort.
 pub static mut CORE_SP: usize = 0;
-pub static mut CORE_LR: usize = 0;
-pub static mut ABORT_PC: usize = 0;
 
-/// The task stack region as (bottom, top), so a caller can check an address is inside it.
+/// The function an aborted task resumes at. It must not return.
+static mut RESUME: usize = 0;
+
+/// What a task runs.
+pub type Entry = fn() -> u64;
+
+/// Tell the switch where to go if the task has to be aborted. Called once, before any task runs.
+pub fn set_resume(target: extern "C" fn() -> !) {
+    // SAFETY: single writer, before any task exists.
+    unsafe { RESUME = target as usize };
+}
+
+/// The stack region a task is given, as (bottom, top).
 pub fn region() -> (usize, usize) {
     let bottom = core::ptr::addr_of!(TASK_STACK) as usize;
     (bottom, bottom + core::mem::size_of::<Stack>())
 }
 
-/// What a task runs. Returns a value so the Core can check the task actually ran rather than only that it did not
-/// crash.
-pub type Entry = fn() -> u64;
-
-/// Run `entry` on `stack_top` and return its value, with the Core's own stack pointer restored afterwards.
+/// Run `entry` on `stack_top` and come back to the Core.
 ///
-/// The switch is four instructions and it is all in assembly because there is nothing else that can do it: `sp` is
-/// not accessible from stable Rust, and doing this through a "closure on a fake stack" would be a different, weaker
-/// claim.
+/// The only thing parked is the Core's sp: the abort path needs nothing else, because it resumes by tail-calling a
+/// function that never returns. `tmp` is an `out(reg)` operand so the compiler chooses its register, and nothing in
+/// this template names a register the compiler might also have chosen for an operand.
 ///
 /// # Safety
-/// `stack_top` must be the top of a writable, 16-byte aligned region at least as large as the entry's stack use, and
-/// the entry must not return into the Core's stack.
+/// `stack_top` must be the top of a writable, 16-byte aligned region large enough for the entry, and `set_resume`
+/// must have been called with a function that never returns.
 pub unsafe fn run(entry: Entry, stack_top: usize) {
-    // SAFETY: the caller guarantees the stack. Three values are parked in statics so the fault handler can come back
-    // here from a task's violation: the Core's sp, the Core's return address, and the label just after `blr`. The
-    // label is what an abort jumps to; there it restores sp and lr and returns to the Core as if the task had
-    // finished, with the violation already recorded.
-    // SAFETY: the caller guarantees `stack_top` and that the entry does not return into the Core's stack.
+    let mut tmp: usize = 0;
+    // SAFETY: the caller guarantees the stack and the resume target.
     unsafe {
-        let sp_slot = core::ptr::addr_of_mut!(CORE_SP);
-        let lr_slot = core::ptr::addr_of_mut!(CORE_LR);
-        let pc_slot = core::ptr::addr_of_mut!(ABORT_PC);
         core::arch::asm!(
-            "mov x20, sp",
-            "str x20, [{sp_slot}]",
-            "str x30, [{lr_slot}]",
-            "adr x21, 1f",
-            "str x21, [{pc_slot}]",
+            "mov {tmp}, sp",
+            "str {tmp}, [{slot}]",
             "mov sp, {stack}",
             "blr {entry}",
-            "1:",
-            "ldr x20, [{sp_slot}]",
-            "mov sp, x20",
-            "ldr x30, [{lr_slot}]",
-            "ret",
-            // PINNED REGISTERS, and this is the bug the first version had: `in(reg)` operands are allocated by the
-            // compiler and can land in x20/x21 — the very registers this asm uses — so `mov x20, sp` overwrote the
-            // pointer it was about to store through. Measured: the task ran and the Core never came back.
-            sp_slot = in("x22") sp_slot,
-            lr_slot = in("x23") lr_slot,
-            pc_slot = in("x24") pc_slot,
-            stack = in("x25") stack_top,
-            entry = in("x26") entry as usize,
-            out("x20") _, out("x21") _,
+            "ldr {tmp}, [{slot}]",
+            "mov sp, {tmp}",
+            slot = in(reg) core::ptr::addr_of_mut!(CORE_SP),
+            stack = in(reg) stack_top,
+            entry = in(reg) entry as usize,
+            tmp = out(reg) tmp,
         );
     }
 }
 
-/// Return to the Core from a faulted task: a task that oversteps is a dead task, not a dead machine.
+/// Return to the Core from a faulted task: hand it its stack pointer, then tail-call the resume function.
 ///
 /// # Safety
-/// Only valid while a task launched by `run` is executing.
+/// Only valid while a task launched by `run` is executing, and only with the resume target set to a function that
+/// never returns.
 pub unsafe fn abort_to_core() -> ! {
-    // SAFETY: the statics were written by `run` before the task started, and the abort label restores sp/lr there.
+    // SAFETY: both values were written before the task started.
     unsafe {
         let sp = CORE_SP;
-        let pc = ABORT_PC;
+        let resume = RESUME;
         core::arch::asm!(
             "mov sp, {sp}",
             "br {pc}",
             sp = in(reg) sp,
-            pc = in(reg) pc,
+            pc = in(reg) resume,
             options(noreturn),
         );
     }
