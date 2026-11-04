@@ -151,6 +151,21 @@ global_asm!(
 
     .section .text.entry, "ax"
     .global _start
+    /* ---- THE AARCH64 IMAGE HEADER. The firmware's boot protocol: QEMU (and the Pi) hand a kernel in Image format the
+       device tree in x0; a bare ELF gets nothing, measured here as x0 == 0. So the Core can be booted either way: the
+       ELF for the fifteen gates that already pass, and the Image whenever the machine's own description is wanted. ---- */
+    .balign 8
+image_header:
+    b       _start            /* 0: a branch over the header */
+    .quad   0x80000           /* 8: text_offset — the Core is linked at RAM+0x80000 */
+    .quad   0                 /* 16: image_size, filled by the build if it matters */
+    .quad   3                 /* 24: flags — little-endian, 4 KiB pages */
+    .quad   0                 /* 32 */
+    .quad   0                 /* 40 */
+    .quad   0                 /* 48 */
+    .int    0x644d5241        /* 56: "ARM\x64" */
+    .balign 8
+
 _start:
     /* FIRST INSTRUCTION: the firmware's device tree pointer arrives in x0, and every instruction after this one may
        clobber it. Measured: storing it further down left the reader looking at a valid-looking pointer that was not
