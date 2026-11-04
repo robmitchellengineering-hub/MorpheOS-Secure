@@ -42,3 +42,6 @@ sched-mutant-no-switch = []
 # The two-task preemption demo. The boot does not run it unless this is on: task A never returns, so an
 # always-on demo made every other gate's boot stop before its own lines.
 preempt-demo = []
+# M5d's mutation: ignore priority and round-robin, which looks like a scheduler and lets a lower class take the
+# audio class's CPU.
+sched-mutant-ignore-priority = []

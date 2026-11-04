@@ -437,6 +437,35 @@ pub extern "C" fn kmain() -> ! {
     uart.write_hex(scheduler.switches());
     uart.write_line("");
 
+    // M5d, the priority policy — tested in the DECISION, not in the timing. Two tasks are ready; one is audio, one is
+    // normal. Six picks must all be audio, because a lower class must not take the audio class's CPU while it is
+    // ready. Timing would be the honest consequence, but a timing assertion on a 4-core VM is a flake generator; the
+    // policy is where the claim actually lives.
+    let mut prio = sched::Scheduler::new();
+    prio.admit_with_priority(sched::TaskId(0), sched::Priority::Normal);
+    prio.admit_with_priority(sched::TaskId(1), sched::Priority::Audio);
+    let mut picks = [0u8; 6];
+    for slot in picks.iter_mut() {
+        *slot = match prio.pick_next() {
+            Some(t) => b'0' + t.0 as u8,
+            None => b'x',
+        };
+    }
+    let mut line = uart::LineBuf::new();
+    line.push_str("PRIORITY: picks ");
+    for (i, b) in picks.iter().enumerate() {
+        if i > 0 {
+            line.push_str(",");
+        }
+        line.push_byte(*b);
+    }
+    line.flush(&uart);
+    if picks == *b"111111" {
+        uart.write_line("PRIORITY: the audio class took every pick — a normal task cannot starve it");
+    } else {
+        uart.write_line("PRIORITY: FAIL a normal task took a pick the audio class should have had");
+    }
+
     // Build a task frame and CHECK IT before anything could jump to it. A frame that is wrong is a hang with no
     // output, so its two resumption slots are printed: the entry address and the PSTATE the task will start in.
     let task_region_top = {

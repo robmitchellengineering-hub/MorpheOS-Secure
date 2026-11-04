@@ -12,6 +12,16 @@
 //! WHAT IT IS NOT: no priorities (M5d), no deadlines, no blocking, no more than two tasks. A real-time class needs a
 //! budget, and a budget needs the certificate (M7a) to be more than an assertion.
 
+/// A task's class. Audio is the one that must not be starved: it is the class AirMatrix's engine runs in, and a
+/// priority is only honest if a lower class cannot take its CPU while it is ready.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
+pub enum Priority {
+    /// The audio path. Highest.
+    Audio = 0,
+    /// Everything else.
+    Normal = 1,
+}
+
 /// A task's saved frame, in the layout the interrupt path saves: 31 registers at 0..240, `x30` at 240,
 /// `ELR_EL1` at 248, `SPSR_EL1` at 256, 288 bytes total (16-byte aligned).
 pub const FRAME_WORDS: usize = 288 / 8;
@@ -149,19 +159,34 @@ pub struct TaskId(pub usize);
 /// Ready flags and the current choice. A task is "ready" if it can run; on this rung both start ready and stay ready.
 pub struct Scheduler {
     ready: [bool; TASKS],
+    priority: [Priority; TASKS],
     current: TaskId,
     switches: u64,
 }
 
 impl Scheduler {
     pub const fn new() -> Self {
-        Self { ready: [false; TASKS], current: TaskId(0), switches: 0 }
+        Self {
+            ready: [false; TASKS],
+            priority: [Priority::Normal; TASKS],
+            current: TaskId(0),
+            switches: 0,
+        }
     }
 
     pub fn admit(&mut self, task: TaskId) {
+        self.admit_with_priority(task, Priority::Normal);
+    }
+
+    pub fn admit_with_priority(&mut self, task: TaskId, priority: Priority) {
         if task.0 < TASKS {
             self.ready[task.0] = true;
+            self.priority[task.0] = priority;
         }
+    }
+
+    pub fn priority_of(&self, task: TaskId) -> Priority {
+        self.priority[task.0]
     }
 
     pub fn current(&self) -> TaskId {
@@ -181,9 +206,33 @@ impl Scheduler {
             self.switches += 1;
             return Some(TaskId(0));
         }
+        // Priority first: the best class among the ready tasks. Then round-robin among the tasks in that class, so a
+        // class with two tasks does not starve one of them.
+        if cfg!(feature = "sched-mutant-ignore-priority") {
+            for step in 1..=TASKS {
+                let candidate = (self.current.0 + step) % TASKS;
+                if self.ready[candidate] {
+                    self.switches += 1;
+                    self.current = TaskId(candidate);
+                    return Some(self.current);
+                }
+            }
+            return None;
+        }
+        let mut best: Option<Priority> = None;
+        for task in 0..TASKS {
+            if self.ready[task] {
+                let p = self.priority[task];
+                best = Some(match best {
+                    Some(b) if b <= p => b,
+                    _ => p,
+                });
+            }
+        }
+        let best = best?;
         for step in 1..=TASKS {
             let candidate = (self.current.0 + step) % TASKS;
-            if self.ready[candidate] {
+            if self.ready[candidate] && self.priority[candidate] == best {
                 self.switches += 1;
                 self.current = TaskId(candidate);
                 return Some(self.current);
