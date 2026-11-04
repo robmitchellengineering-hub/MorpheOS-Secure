@@ -13,6 +13,10 @@
 # Exit code 0 only if every gate is green. A red gate prints its own reason above the table.
 set -uo pipefail
 cd "$(dirname "$0")/.."
+# The toolchains live in ~/.cargo/bin, which is not on PATH for a non-login shell (nohup, CI, a bare ssh command).
+# Measured: a sweep run under nohup reported "no verdict" for all eleven gates - an environment failure read as eleven
+# code failures. The sweep finds its own toolchain.
+export PATH="$HOME/.cargo/bin:$PATH"
 
 GATES=(m0 m1 m2 m2b mmu task isolation clock tick sched preempt)
 pass=0
