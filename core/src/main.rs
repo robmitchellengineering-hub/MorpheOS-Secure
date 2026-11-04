@@ -140,15 +140,18 @@ fn task_entry() -> u64 {
     let mut buffer = [0u8; 2048];
     // Record where this frame actually is, so the Core can judge it rather than trust the narrative.
     unsafe { task::TASK_STACK_SEEN = core::ptr::addr_of!(buffer) as usize };
-    unsafe { task::TASK_RESULT = u64::from(buffer[0]) + u64::from(buffer[2047]) };
     buffer[0] = 0xA5;
     buffer[2047] = 0x5A;
+    // AFTER the buffer is written. Measured: recording this before the writes told the Core the task returned 0, and
+    // the verdict printed "returned 0x0" - the three facts did the work the narrative had been doing.
     let uart = Uart::at(UART_QEMU_VIRT);
     uart.write_str("M4a: the task is running, with its stack somewhere near 0x");
     // The address of a local, i.e. where the task's stack actually is.
     uart.write_hex(buffer.as_ptr() as u64);
     uart.write_line("");
-    u64::from(buffer[0]) + u64::from(buffer[2047])
+    let result = u64::from(buffer[0]) + u64::from(buffer[2047]);
+    unsafe { task::TASK_RESULT = result };
+    result
 }
 
 /// The Core's first instruction in Rust.
