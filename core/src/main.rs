@@ -77,6 +77,86 @@ vectors:
 "#
 );
 
+/// The Core's first instruction in Rust.
+#[unsafe(no_mangle)]
+pub extern "C" fn kmain() -> ! {
+    let uart = Uart::at(UART_QEMU_VIRT);
+    uart.init();
+
+    uart.write_line(BANNER);
+    uart.write_line("MORPHEOS-CORE: EL1, MMU off, load address 0x40080000");
+
+    // ---- M1: the capability space. Two objects, two tasks, and the Core deciding who may name what. ----
+    let measurement = Object { id: ObjectId(1), name: "measurement", value: 0xA1 };
+    let plugin_state = Object { id: ObjectId(2), name: "plugin-state", value: 0xB2 };
+
+    let mut task_bench = CapTable::empty();
+    let _bench_cap = task_bench.grant(measurement.id);
+    let mut task_plugin = CapTable::empty();
+    let _plugin_cap = task_plugin.grant(plugin_state.id);
+
+    #[cfg(feature = "m1-mutant-grant")]
+    let _mutant = task_bench.grant(plugin_state.id);
+
+    uart.write_line("M1: task_bench holds: measurement");
+    uart.write_line("M1: task_plugin holds: plugin-state");
+
+    let _ = access(&uart, "task_bench", &task_bench, &measurement);
+    let _ = access(&uart, "task_bench", &task_bench, &plugin_state);
+    let _ = access(&uart, "task_plugin", &task_plugin, &plugin_state);
+    let _ = access(&uart, "task_plugin", &task_plugin, &measurement);
+    uart.write_line("M1: the Core decided both directions; no task holds a capability it was not handed");
+
+    // ---- M2: the ledger. ----
+    let mut machine = Ledger::empty();
+    ledger::report(&uart, &mut machine);
+
+    // ---- M2b: the memory the machine owns. ----
+    // SAFETY: called once, before any allocation, on the single core this rung runs on.
+    unsafe { ALLOCATOR.init() };
+    uart.write_line("M2b: allocator initialised (arena handed to the free list)");
+    {
+        use alloc::vec::Vec;
+        let mut cue_list: Vec<u32> = Vec::new();
+        for cue in 1..=8u32 {
+            cue_list.push(cue * 1000);
+        }
+        uart.write_line("M2b: 8 pushes through the global allocator returned");
+        let first = cue_list.as_ptr() as usize;
+        drop(cue_list);
+        uart.write_line("M2b: the cue list was dropped");
+
+        let mut second: Vec<u32> = Vec::with_capacity(8);
+        second.push(7);
+        let reused = second.as_ptr() as usize == first;
+        if reused {
+            uart.write_line("M2b: the freed block was reused by the next allocation (first fit, as designed)");
+        } else {
+            uart.write_line("M2b: the freed block was NOT reused — first fit did not take the hole");
+        }
+
+        let layout = alloc::alloc::Layout::from_size_align(64, 16).expect("valid layout");
+        // SAFETY: the allocator is initialised, the layout is valid, and the pointer is used once.
+        let p = unsafe { alloc::alloc::alloc(layout) };
+        // SAFETY: p came from the same allocator with the same layout.
+        unsafe { alloc::alloc::dealloc(p, layout) };
+        // SAFETY: this is THE double free — the attack the falsifier runs.
+        unsafe { alloc::alloc::dealloc(p, layout) };
+        let (_, _, refused) = ALLOCATOR.stats();
+        if refused >= 1 {
+            uart.write_line("M2b: DOUBLE FREE REFUSED — the block was not inserted twice");
+        } else {
+            uart.write_line("M2b: FAIL a double free was accepted; two owners can now hold the same bytes");
+        }
+    }
+
+    uart.write_line(DONE);
+    loop {
+        // SAFETY: `wfe` at EL1 is always legal; it is the correct way for an idle core to wait.
+        unsafe { core::arch::asm!("wfe", options(nomem, nostack)) };
+    }
+}
+
 /// The Core's own failure path: name the fault, with the registers an engineer needs to act on it.
 ///
 /// `esr` is the exception syndrome (what kind of fault), `far` the faulting address where the architecture provides
