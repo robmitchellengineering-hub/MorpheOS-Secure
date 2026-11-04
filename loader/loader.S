@@ -85,8 +85,11 @@ long_mode:
     mov ss, ax
 
     /* Hand the CPU to the Core at the address it was linked for. The Core's first instruction is at the first byte
-     * of the blob, which is why its linker script puts `.text.entry` there. */
-    mov rax, CORE_LOAD_ADDR
+     * of the blob, which is why its linker script puts `.text.entry` there.
+     *
+     * `mov eax, imm32` rather than `mov rax, imm64`: the address is below 4 GiB, and a 64-bit absolute immediate is
+     * a relocation a 32-bit object file cannot carry (BFD_RELOC_X86_64_32S, measured on the first build). */
+    mov eax, CORE_LOAD_ADDR
     jmp rax
 
 2:  hlt
