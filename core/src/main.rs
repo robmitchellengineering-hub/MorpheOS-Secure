@@ -20,7 +20,9 @@
 use core::arch::global_asm;
 use core::panic::PanicInfo;
 
+mod cap;
 mod uart;
+use cap::{access, CapTable, Object, ObjectId};
 use uart::{Uart, UART_QEMU_VIRT};
 
 /// The line M0 asserts. One place, so the test and the Core cannot disagree.
@@ -52,7 +54,35 @@ pub extern "C" fn kmain() -> ! {
     uart.init();
 
     uart.write_line(BANNER);
-    uart.write_line("MORPHEOS-CORE: EL1, MMU off, load address 0x40080000 — capability space and ledger are M1 and M2");
+    uart.write_line("MORPHEOS-CORE: EL1, MMU off, load address 0x40080000");
+
+    // ---- M1: the capability space. Two objects, two tasks, and the Core deciding who may name what. ----
+    //
+    // `task_bench` is handed the measurement object and NOT the plugin-state object. `task_plugin` is the other way
+    // round. Neither holds a "user" and neither can obtain the other's object: the only constructor of a capability
+    // is `CapTable::grant`, and only the Core calls it.
+    let measurement = Object { id: ObjectId(1), name: "measurement", value: 0xA1 };
+    let plugin_state = Object { id: ObjectId(2), name: "plugin-state", value: 0xB2 };
+
+    let mut task_bench = CapTable::empty();
+    let _bench_cap = task_bench.grant(measurement.id);
+    let mut task_plugin = CapTable::empty();
+    let _plugin_cap = task_plugin.grant(plugin_state.id);
+
+    // The mutation: `scripts/m1.sh --self-test` builds with this feature and the Core must then ALLOW what it refuses
+    // in the real build. If the test still passes, the test is asserting a string rather than the Core's table.
+    #[cfg(feature = "m1-mutant-grant")]
+    let _mutant = task_bench.grant(plugin_state.id);
+
+    uart.write_line("M1: task_bench holds: measurement");
+    uart.write_line("M1: task_plugin holds: plugin-state");
+
+    let _ = access(&uart, "task_bench", &task_bench, &measurement);   // must be ALLOWED
+    let _ = access(&uart, "task_bench", &task_bench, &plugin_state);  // must be REFUSED by the Core
+    let _ = access(&uart, "task_plugin", &task_plugin, &plugin_state);// must be ALLOWED
+    let _ = access(&uart, "task_plugin", &task_plugin, &measurement); // must be REFUSED by the Core
+
+    uart.write_line("M1: the Core decided both directions; no task holds a capability it was not handed");
     uart.write_line(DONE);
 
     // Nothing to return to: no scheduler and no exit device on this architecture. The test harness watches the serial
