@@ -39,6 +39,11 @@ use uart::{Uart, UART_QEMU_VIRT};
 pub const BANNER: &str = "MORPHEOS-CORE 0.0.1: the Core is running on aarch64; no Linux, no syscalls, no processes";
 pub const DONE: &str = "MORPHEOS-CORE: reported; halting";
 
+/// Set by the fault handler when the guard probe faulted, so the code *after* the probe can tell a recovered fault
+/// from a successful read. Without this the post-fault path cannot distinguish them — measured: the probe faulted,
+/// the handler recovered, and the Core then printed the failure line because nothing recorded that the fault happened.
+static PROBE_FAULTED: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
 // The entry point, in assembly, because there is no stack until it makes one. QEMU starts us at EL1 in AArch64 with
 // the MMU off; `sp` is not guaranteed to point anywhere useful, so that is the whole of the first instruction's job,
 // and it is the only assembly the Core needs on this rung.
