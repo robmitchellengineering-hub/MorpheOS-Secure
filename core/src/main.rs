@@ -343,178 +343,6 @@ extern "C" fn after_task_aborted() -> ! {
     let uart = Uart::at(UART_QEMU_VIRT);
     uart.write_line("M4c: TASK ABORTED — the Core resumed on its own stack, the evidence stays, the boot continues");
     uart.write_line(DONE);
-    loop {
-        // SAFETY: an aborted task's continuation has nothing to return to on this rung.
-        unsafe { core::arch::asm!("wfe", options(nomem, nostack)) };
-    }
-}
-
-/// The Core's first instruction in Rust.
-#[unsafe(no_mangle)]
-pub extern "C" fn kmain() -> ! {
-    let uart = Uart::at(UART_QEMU_VIRT);
-    uart.init();
-
-    uart.write_line(BANNER);
-    uart.write_line("MORPHEOS-CORE: EL1, MMU off, load address 0x40080000");
-
-    // ---- M1: the capability space. Two objects, two tasks, and the Core deciding who may name what. ----
-    let measurement = Object { id: ObjectId(1), name: "measurement", value: 0xA1 };
-    let plugin_state = Object { id: ObjectId(2), name: "plugin-state", value: 0xB2 };
-
-    let mut task_bench = CapTable::empty();
-    let _bench_cap = task_bench.grant(measurement.id);
-    let mut task_plugin = CapTable::empty();
-    let _plugin_cap = task_plugin.grant(plugin_state.id);
-
-    #[cfg(feature = "m1-mutant-grant")]
-    let _mutant = task_bench.grant(plugin_state.id);
-
-    uart.write_line("M1: task_bench holds: measurement");
-    uart.write_line("M1: task_plugin holds: plugin-state");
-
-    let _ = access(&uart, "task_bench", &task_bench, &measurement);
-    let _ = access(&uart, "task_bench", &task_bench, &plugin_state);
-    let _ = access(&uart, "task_plugin", &task_plugin, &plugin_state);
-    let _ = access(&uart, "task_plugin", &task_plugin, &measurement);
-    uart.write_line("M1: the Core decided both directions; no task holds a capability it was not handed");
-
-    // ---- M5c, policy half: two tasks, and the Core choosing between them. No assembly, no switch: this is the
-    // decision, measured on its own so that the mechanism cannot hide a policy bug or the reverse. ----
-    let mut scheduler = sched::Scheduler::new();
-    scheduler.admit(sched::TaskId(0));
-    scheduler.admit(sched::TaskId(1));
-    uart.write_line("SCHED: two tasks admitted, both ready");
-    let mut sequence = [0u8; 6];
-    for slot in sequence.iter_mut() {
-        match scheduler.pick_next() {
-            Some(task) => *slot = b'0' + task.0 as u8,
-            None => *slot = b'x',
-        }
-    }
-    let expected = *b"101010";
-    if sequence == expected {
-        uart.write_line("SCHED: picks 1,0,1,0,1,0 — the choice alternates, so a second task really runs");
-    } else {
-        uart.write_str("SCHED: FAIL the choice did not alternate: ");
-        for byte in sequence.iter() {
-            uart.write_byte(*byte);
-            uart.write_byte(b' ');
-        }
-        uart.write_line("");
-    }
-    uart.write_str("SCHED: switches recorded: 0x");
-    uart.write_hex(scheduler.switches());
-    uart.write_line("");
-
-    // Build a task frame and CHECK IT before anything could jump to it. A frame that is wrong is a hang with no
-    // output, so its two resumption slots are printed: the entry address and the PSTATE the task will start in.
-    let task_region_top = {
-        let (bottom, _) = task::region();
-        let _ = bottom;
-        let stack = core::ptr::addr_of!(sched::TASK_B_STACK) as usize;
-        stack + core::mem::size_of::<sched::TaskStack>()
-    };
-    let frame = sched::install_frame(task_region_top, task_second_entry as usize);
-    let (elr, spsr) = sched::frame_state(frame);
-    uart.write_str("SCHED: a task frame at 0x");
-    uart.write_hex(frame as u64);
-    uart.write_str(" resumes at 0x");
-    uart.write_hex(elr);
-    uart.write_str(" in PSTATE 0x");
-    uart.write_hex(spsr);
-    uart.write_line("");
-    if elr == task_second_entry as u64 && spsr == sched::SPSR_EL1H_UNMASKED {
-        uart.write_line("SCHED: the frame is resumable — entry and PSTATE are what a switch must load");
-    } else {
-        uart.write_line("SCHED: FAIL the frame's resumption slots are wrong");
-    }
-
-    // ---- M5a: the machine's clock. The counter every deadline will be measured against. ----
-    let freq = clock::frequency();
-    uart.write_str("TICK: CNTFRQ_EL0 = 0x");
-    uart.write_hex(freq);
-    uart.write_line(" Hz (from the hardware, not from a table)");
-    // The Core states this itself rather than leaving a gate to guess at a hex string. Measured: two rounds were lost
-    // to a regex over a zero-padded value, which is a gate problem pretending to be a clock problem.
-    if freq != 0 {
-        uart.write_line("TICK: the frequency is non-zero, as a clock needs it to be");
-    } else {
-        uart.write_line("TICK: FAIL the hardware reported no frequency");
-    }
-    let start = clock::now();
-    // A known workload, so the advance is measured rather than asserted.
-    let mut spin: u64 = 0;
-    for i in 0..200_000u64 {
-        spin = spin.wrapping_add(i);
-    }
-    let after = clock::now();
-    let advanced = after.saturating_sub(start);
-    uart.write_str("TICK: the counter advanced by 0x");
-    uart.write_hex(advanced);
-    uart.write_str(" ticks over a 200k-iteration loop (checksum 0x");
-    uart.write_hex(spin);
-    uart.write_line(")");
-    if advanced == 0 {
-        uart.write_line("TICK: FAIL the counter did not advance — a deadline can never be met");
-    } else {
-        uart.write_line("TICK: the counter advances");
-    }
-    // A deadline: 1 ms, measured in the hardware's own units, and measured ONLY around the wait.
-    //
-    // Measured wrong the first time: the reading was taken before the line above was printed, so the console write
-    // (~100 characters at 115200 baud) was counted as part of a 1 ms deadline — which is where the reported 10.8 ms
-    // came from. A latency figure that includes the instrument is not a latency figure.
-    let before = clock::now();
-    let deadline = before + clock::ticks_for_ms(1);
-    let reached = clock::wait_until(deadline);
-    let elapsed_ns = clock::ns_between(before, reached);
-    uart.write_str("TICK: a 1 ms deadline was reached, 0x");
-    uart.write_hex(elapsed_ns);
-    uart.write_line(" ns after the wait began");
-    // Strict, and on purpose: a 1 ms deadline met in 10 ms is a miss, and a bound that accepts it is not a bound.
-    if elapsed_ns >= 1_000_000 && elapsed_ns <= 3_000_000 {
-        uart.write_line("TICK: the deadline was honoured in real time (within 3 ms of a 1 ms target)");
-    } else if elapsed_ns < 1_000_000 {
-        uart.write_line("TICK: FAIL the deadline returned before its time");
-    } else {
-        uart.write_line("TICK: FAIL the deadline missed by more than 3x — real-time budget not met");
-    }
-
-    // ---- M5b interrupt half: the timer interrupts the Core, with no polling loop asking. ----
-    uart.write_line("IRQ: about to bring up the GICv2");
-    gic::init();
-    uart.write_line("IRQ: the GIC is up (distributor + CPU interface + PPI 30)");
-    clock::arm_in(clock::ticks_for_ms(1));
-    uart.write_line("IRQ: the timer is armed for 1 ms");
-    let irq_start = clock::now();
-    // SAFETY: the vector table and the GIC are both in place.
-    unsafe { gic::unmask() };
-    uart.write_line("IRQ: interrupts are unmasked — anything that arrives from here is the machine's, not a poll");
-    let mut waited = 0u64;
-    while gic::ticks() < 3 {
-        if clock::ns_between(irq_start, clock::now()) > 50_000_000 {
-            break;
-        }
-        waited += 1;
-        core::hint::spin_loop();
-    }
-    let arrived = gic::ticks();
-    let irq_ns = clock::ns_between(irq_start, clock::now());
-    // SAFETY: mask interrupts again so the rest of the boot is deterministic.
-    unsafe { core::arch::asm!("msr daifset, #2", options(nostack)) };
-    if arrived >= 3 {
-        uart.write_str("TICK: the Core was INTERRUPTED 0x");
-        uart.write_hex(arrived);
-        uart.write_str(" times by the timer, 0x");
-        uart.write_hex(irq_ns);
-        uart.write_line(" ns after unmasking (no polling: the interrupts arrived on their own)");
-        uart.write_line("TICK: the tick is real — a real-time class can be built on it");
-    } else {
-        uart.write_str("TICK: FAIL only 0x");
-        uart.write_hex(arrived);
-        uart.write_line(" timer interrupts arrived in 50 ms — the interrupt path is not working");
-    }
 
     // ---- M5c part four: preemption. Two contexts, one CPU, and the timer choosing between them. ----
     let second_top = {
@@ -690,6 +518,179 @@ pub extern "C" fn kmain() -> ! {
         } else {
             uart.write_line("M2b: FAIL a double free was accepted; two owners can now hold the same bytes");
         }
+    }
+
+    loop {
+        // SAFETY: an aborted task's continuation has nothing to return to on this rung.
+        unsafe { core::arch::asm!("wfe", options(nomem, nostack)) };
+    }
+}
+
+/// The Core's first instruction in Rust.
+#[unsafe(no_mangle)]
+pub extern "C" fn kmain() -> ! {
+    let uart = Uart::at(UART_QEMU_VIRT);
+    uart.init();
+
+    uart.write_line(BANNER);
+    uart.write_line("MORPHEOS-CORE: EL1, MMU off, load address 0x40080000");
+
+    // ---- M1: the capability space. Two objects, two tasks, and the Core deciding who may name what. ----
+    let measurement = Object { id: ObjectId(1), name: "measurement", value: 0xA1 };
+    let plugin_state = Object { id: ObjectId(2), name: "plugin-state", value: 0xB2 };
+
+    let mut task_bench = CapTable::empty();
+    let _bench_cap = task_bench.grant(measurement.id);
+    let mut task_plugin = CapTable::empty();
+    let _plugin_cap = task_plugin.grant(plugin_state.id);
+
+    #[cfg(feature = "m1-mutant-grant")]
+    let _mutant = task_bench.grant(plugin_state.id);
+
+    uart.write_line("M1: task_bench holds: measurement");
+    uart.write_line("M1: task_plugin holds: plugin-state");
+
+    let _ = access(&uart, "task_bench", &task_bench, &measurement);
+    let _ = access(&uart, "task_bench", &task_bench, &plugin_state);
+    let _ = access(&uart, "task_plugin", &task_plugin, &plugin_state);
+    let _ = access(&uart, "task_plugin", &task_plugin, &measurement);
+    uart.write_line("M1: the Core decided both directions; no task holds a capability it was not handed");
+
+    // ---- M5c, policy half: two tasks, and the Core choosing between them. No assembly, no switch: this is the
+    // decision, measured on its own so that the mechanism cannot hide a policy bug or the reverse. ----
+    let mut scheduler = sched::Scheduler::new();
+    scheduler.admit(sched::TaskId(0));
+    scheduler.admit(sched::TaskId(1));
+    uart.write_line("SCHED: two tasks admitted, both ready");
+    let mut sequence = [0u8; 6];
+    for slot in sequence.iter_mut() {
+        match scheduler.pick_next() {
+            Some(task) => *slot = b'0' + task.0 as u8,
+            None => *slot = b'x',
+        }
+    }
+    let expected = *b"101010";
+    if sequence == expected {
+        uart.write_line("SCHED: picks 1,0,1,0,1,0 — the choice alternates, so a second task really runs");
+    } else {
+        uart.write_str("SCHED: FAIL the choice did not alternate: ");
+        for byte in sequence.iter() {
+            uart.write_byte(*byte);
+            uart.write_byte(b' ');
+        }
+        uart.write_line("");
+    }
+    uart.write_str("SCHED: switches recorded: 0x");
+    uart.write_hex(scheduler.switches());
+    uart.write_line("");
+
+    // Build a task frame and CHECK IT before anything could jump to it. A frame that is wrong is a hang with no
+    // output, so its two resumption slots are printed: the entry address and the PSTATE the task will start in.
+    let task_region_top = {
+        let (bottom, _) = task::region();
+        let _ = bottom;
+        let stack = core::ptr::addr_of!(sched::TASK_B_STACK) as usize;
+        stack + core::mem::size_of::<sched::TaskStack>()
+    };
+    let frame = sched::install_frame(task_region_top, task_second_entry as usize);
+    let (elr, spsr) = sched::frame_state(frame);
+    uart.write_str("SCHED: a task frame at 0x");
+    uart.write_hex(frame as u64);
+    uart.write_str(" resumes at 0x");
+    uart.write_hex(elr);
+    uart.write_str(" in PSTATE 0x");
+    uart.write_hex(spsr);
+    uart.write_line("");
+    if elr == task_second_entry as u64 && spsr == sched::SPSR_EL1H_UNMASKED {
+        uart.write_line("SCHED: the frame is resumable — entry and PSTATE are what a switch must load");
+    } else {
+        uart.write_line("SCHED: FAIL the frame's resumption slots are wrong");
+    }
+
+    // ---- M5a: the machine's clock. The counter every deadline will be measured against. ----
+    let freq = clock::frequency();
+    uart.write_str("TICK: CNTFRQ_EL0 = 0x");
+    uart.write_hex(freq);
+    uart.write_line(" Hz (from the hardware, not from a table)");
+    // The Core states this itself rather than leaving a gate to guess at a hex string. Measured: two rounds were lost
+    // to a regex over a zero-padded value, which is a gate problem pretending to be a clock problem.
+    if freq != 0 {
+        uart.write_line("TICK: the frequency is non-zero, as a clock needs it to be");
+    } else {
+        uart.write_line("TICK: FAIL the hardware reported no frequency");
+    }
+    let start = clock::now();
+    // A known workload, so the advance is measured rather than asserted.
+    let mut spin: u64 = 0;
+    for i in 0..200_000u64 {
+        spin = spin.wrapping_add(i);
+    }
+    let after = clock::now();
+    let advanced = after.saturating_sub(start);
+    uart.write_str("TICK: the counter advanced by 0x");
+    uart.write_hex(advanced);
+    uart.write_str(" ticks over a 200k-iteration loop (checksum 0x");
+    uart.write_hex(spin);
+    uart.write_line(")");
+    if advanced == 0 {
+        uart.write_line("TICK: FAIL the counter did not advance — a deadline can never be met");
+    } else {
+        uart.write_line("TICK: the counter advances");
+    }
+    // A deadline: 1 ms, measured in the hardware's own units, and measured ONLY around the wait.
+    //
+    // Measured wrong the first time: the reading was taken before the line above was printed, so the console write
+    // (~100 characters at 115200 baud) was counted as part of a 1 ms deadline — which is where the reported 10.8 ms
+    // came from. A latency figure that includes the instrument is not a latency figure.
+    let before = clock::now();
+    let deadline = before + clock::ticks_for_ms(1);
+    let reached = clock::wait_until(deadline);
+    let elapsed_ns = clock::ns_between(before, reached);
+    uart.write_str("TICK: a 1 ms deadline was reached, 0x");
+    uart.write_hex(elapsed_ns);
+    uart.write_line(" ns after the wait began");
+    // Strict, and on purpose: a 1 ms deadline met in 10 ms is a miss, and a bound that accepts it is not a bound.
+    if elapsed_ns >= 1_000_000 && elapsed_ns <= 3_000_000 {
+        uart.write_line("TICK: the deadline was honoured in real time (within 3 ms of a 1 ms target)");
+    } else if elapsed_ns < 1_000_000 {
+        uart.write_line("TICK: FAIL the deadline returned before its time");
+    } else {
+        uart.write_line("TICK: FAIL the deadline missed by more than 3x — real-time budget not met");
+    }
+
+    // ---- M5b interrupt half: the timer interrupts the Core, with no polling loop asking. ----
+    uart.write_line("IRQ: about to bring up the GICv2");
+    gic::init();
+    uart.write_line("IRQ: the GIC is up (distributor + CPU interface + PPI 30)");
+    clock::arm_in(clock::ticks_for_ms(1));
+    uart.write_line("IRQ: the timer is armed for 1 ms");
+    let irq_start = clock::now();
+    // SAFETY: the vector table and the GIC are both in place.
+    unsafe { gic::unmask() };
+    uart.write_line("IRQ: interrupts are unmasked — anything that arrives from here is the machine's, not a poll");
+    let mut waited = 0u64;
+    while gic::ticks() < 3 {
+        if clock::ns_between(irq_start, clock::now()) > 50_000_000 {
+            break;
+        }
+        waited += 1;
+        core::hint::spin_loop();
+    }
+    let arrived = gic::ticks();
+    let irq_ns = clock::ns_between(irq_start, clock::now());
+    // SAFETY: mask interrupts again so the rest of the boot is deterministic.
+    unsafe { core::arch::asm!("msr daifset, #2", options(nostack)) };
+    if arrived >= 3 {
+        uart.write_str("TICK: the Core was INTERRUPTED 0x");
+        uart.write_hex(arrived);
+        uart.write_str(" times by the timer, 0x");
+        uart.write_hex(irq_ns);
+        uart.write_line(" ns after unmasking (no polling: the interrupts arrived on their own)");
+        uart.write_line("TICK: the tick is real — a real-time class can be built on it");
+    } else {
+        uart.write_str("TICK: FAIL only 0x");
+        uart.write_hex(arrived);
+        uart.write_line(" timer interrupts arrived in 50 ms — the interrupt path is not working");
     }
 
     uart.write_line(DONE);
