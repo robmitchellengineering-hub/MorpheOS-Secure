@@ -44,21 +44,17 @@ impl Uart {
     }
 
     pub fn write_byte(&self, byte: u8) {
-        // A BOUNDED wait, deliberately. Measured on studio-linux2: the polled write hung the machine mid-line ("...it
-        // was handed" with no newline), because the check spun on TXFF with no way out. On a boot path, a console
-        // that can stop the Core is a worse fault than a dropped character — so this waits a long time, then writes
-        // anyway and lets the hardware drop the byte if it must.
-        const MAX_SPINS: u32 = 2_000_000;
-        let mut spins = 0u32;
-        // SAFETY: as above. FR is read-only in normal operation; DR accepts one byte while TXFF is clear.
+        // NO FLAG POLL, AND A FIXED PACE. Measured twice on studio-linux2: the polled write wedged the machine on the
+        // longest line - FR.TXFF stayed set and the Core stopped talking mid-sentence, with the bounded escape only
+        // hiding the symptom. A console that depends on a flag clearing cannot be trusted on the boot path, so this
+        // paces the write instead: long enough for a 115200-baud FIFO to drain a byte, short enough to cost nothing.
+        // If the UART is genuinely slower than assumed, a character is dropped - and that is a visible failure, not a
+        // machine that stops.
+        for _ in 0..2_000u32 {
+            core::hint::spin_loop();
+        }
+        // SAFETY: DR is the PL011's data register at a base address chosen for the machine this image was built for.
         unsafe {
-            while read_volatile(self.reg(FR)) & TXFF != 0 {
-                if spins >= MAX_SPINS {
-                    break;
-                }
-                spins += 1;
-                core::hint::spin_loop();
-            }
             write_volatile(self.reg(DR), u32::from(byte));
         }
     }
