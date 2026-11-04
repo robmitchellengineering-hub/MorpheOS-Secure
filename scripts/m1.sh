@@ -16,6 +16,9 @@ cd "$(dirname "$0")/.."
 
 MODE=${1:-check}
 WORK=${M1_WORK:-target/m1}
+# Each mode gets its own build directory. Measured the hard way: a shared one let the mutation's binary
+# be the one the real check booted, so the self-test ran the clean Core and the clean run executed the mutant.
+case "$MODE" in --self-test) WORK="$WORK/selftest" ;; *) WORK="$WORK/check" ;; esac
 case "$MODE" in check|--self-test) ;; *) echo "usage: m1.sh [--self-test]" >&2; exit 2 ;; esac
 
 command -v cargo >/dev/null 2>&1 || { echo "REFUSED: no cargo here" >&2; exit 2; }
@@ -24,13 +27,14 @@ command -v qemu-system-aarch64 >/dev/null 2>&1 || { echo "REFUSED: no qemu-syste
 FEATURES=""
 if [ "$MODE" = "--self-test" ]; then FEATURES="--features m1-mutant-grant"; fi
 
+export CARGO_TARGET_DIR="$WORK/target"
 echo "== building the Core (M1)${FEATURES:+ with the mutation: $FEATURES}"
 # shellcheck disable=SC2086
 if ! cargo build -q -p morph-core --target aarch64-unknown-none --release $FEATURES; then
     echo "FAIL: the Core did not build" >&2
     exit 1
 fi
-ELF=target/aarch64-unknown-none/release/morph-core
+ELF="$WORK/target/aarch64-unknown-none/release/morph-core"
 [ -f "$ELF" ] || { echo "FAIL: no ELF at $ELF" >&2; exit 1; }
 
 mkdir -p "$WORK"
