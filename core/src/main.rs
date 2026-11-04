@@ -27,6 +27,7 @@ mod heap;
 mod cap;
 mod ledger;
 mod mmu;
+mod task;
 mod uart;
 use cap::{access, CapTable, Object, ObjectId};
 use ledger::Ledger;
@@ -132,6 +133,21 @@ vectors:
 "#
 );
 
+/// The task's entry point. It does two things a task must be able to do: use its own stack for real work, and
+/// report where that stack was — so the check can tell a switched stack from the Core's.
+fn task_entry() -> u64 {
+    // A local array large enough to sit well inside the task's stack, and written so the stack is genuinely used.
+    let mut buffer = [0u8; 2048];
+    buffer[0] = 0xA5;
+    buffer[2047] = 0x5A;
+    let uart = Uart::at(UART_QEMU_VIRT);
+    uart.write_str("M4a: the task is running, with its stack somewhere near 0x");
+    // The address of a local, i.e. where the task's stack actually is.
+    uart.write_hex(buffer.as_ptr() as u64);
+    uart.write_line("");
+    u64::from(buffer[0]) + u64::from(buffer[2047])
+}
+
 /// The Core's first instruction in Rust.
 #[unsafe(no_mangle)]
 pub extern "C" fn kmain() -> ! {
@@ -188,6 +204,31 @@ pub extern "C" fn kmain() -> ! {
     // page is the failure. The two paths are told apart by the flag, not by whether a line was printed.
     if PROBE_FAULTED.load(core::sync::atomic::Ordering::SeqCst) {
         uart.write_line("MMU: the Core continued past the guard probe — the fault was caught, the machine did not die");
+
+    // ---- M4a: a second execution context. The task runs on its OWN stack, and the Core gets its stack back. ----
+    let task_stack_top = {
+        // SAFETY: the task stack is static and this is the only use of it.
+        let base = core::ptr::addr_of!(task::TASK_STACK) as usize;
+        base + core::mem::size_of::<task::Stack>()
+    };
+    #[cfg(not(feature = "task-mutant-no-switch"))]
+    let stack_for_task = task_stack_top;
+    // The mutation: hand the task the Core's own stack, so a task and the Core are the same context. The "own stack"
+    // line is then a lie and the check must catch it.
+    #[cfg(feature = "task-mutant-no-switch")]
+    let stack_for_task = 0x4008_0000usize;
+
+    uart.write_str("M4a: switching to a task on stack 0x");
+    uart.write_hex(stack_for_task as u64);
+    uart.write_line("");
+    // SAFETY: the stack is a static 16 KiB region (or, under the mutation, deliberately the wrong one).
+    let value = unsafe { task::run(task_entry, stack_for_task) };
+    // The task returns buffer[0] + buffer[2047] = 0xA5 + 0x5A, so a correct return is exactly 0xFF.
+    if value == 0xFF {
+        uart.write_line("M4a: the task ran on its own stack and returned to the Core");
+    } else {
+        uart.write_line("M4a: FAIL the task did not return the value it must");
+    }
     } else {
         uart.write_str("MMU: FAIL the guard page was readable (value ");
         uart.write_hex(phantom);
