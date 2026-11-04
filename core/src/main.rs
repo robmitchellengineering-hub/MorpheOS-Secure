@@ -78,7 +78,7 @@ pub extern "C" fn kmain() -> ! {
     uart.write_line("M1: task_plugin holds: plugin-state");
 
     let _ = access(&uart, "task_bench", &task_bench, &measurement);   // must be ALLOWED
-    let _ = access(&uart, "task_bench", &task_plugin, &plugin_state); // must be REFUSED by the Core
+    let _ = access(&uart, "task_bench", &task_bench, &plugin_state);  // must be REFUSED by the Core
     let _ = access(&uart, "task_plugin", &task_plugin, &plugin_state);// must be ALLOWED
     let _ = access(&uart, "task_plugin", &task_plugin, &measurement); // must be REFUSED by the Core
 
