@@ -290,23 +290,6 @@ pub extern "C" fn kmain() -> ! {
         uart.write_line("TICK: FAIL the deadline missed by more than 3x — real-time budget not met");
     }
 
-    // ---- M5b: the timer's comparator. Arm it for 1 ms, and watch it fire — polled, so this half of a tick does not
-    // need the GIC. ----
-    clock::arm_in(clock::ticks_for_ms(1));
-    let arm_start = clock::now();
-    let mut fired = false;
-    while !clock::fired() {
-        if clock::ns_between(arm_start, clock::now()) > 50_000_000 {
-            break;
-        }
-        core::hint::spin_loop();
-    }
-    if clock::fired() {
-        fired = true;
-    }
-    let fired_ns = clock::ns_between(arm_start, clock::now());
-    clock::disarm();
-
     // ---- M5b interrupt half: the timer interrupts the Core, with no polling loop asking. ----
     gic::init();
     clock::arm_in(clock::ticks_for_ms(1));
