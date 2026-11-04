@@ -46,7 +46,7 @@ sed -e 's/\r$//' "$LOG" | grep -E "^MMU:|^  MMU:|^MORPHEOS-CORE: reported" | hea
 ENABLED="MMU: ENABLED — SCTLR_EL1.M is set"
 MAPPED="MMU: a mapped read still works"
 FAULTED="MMU: guard page FAULTED as required"
-CONTINUED="MMU: the Core continued past the guard probe"
+CONTINUED="MMU: the Core continued past the guard probe — the fault was caught, the machine did not die"
 
 if [ "$MODE" = "--self-test" ]; then
     if grep -qF "$FAULTED" "$LOG"; then
@@ -66,6 +66,12 @@ for line in "$ENABLED" "$MAPPED" "$FAULTED" "$CONTINUED"; do
     grep -qF "$line" "$LOG" || missing="$missing
   - $line"
 done
+# A green run that also printed a FAIL line is not green: measured, the check passed while the machine said
+# "FAIL the guard page was readable", because the probe's failure path was unconditional and this gate did not look.
+if grep -qF "MMU: FAIL" "$LOG"; then
+    echo "FAIL: the Core reported its own failure while the gate would have passed — that is a broken check" >&2
+    exit 1
+fi
 if [ -n "$missing" ]; then
     echo "FAIL: the MMU did not reach the states it must. Missing:$missing" >&2
     exit 1

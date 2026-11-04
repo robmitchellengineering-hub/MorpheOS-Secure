@@ -179,10 +179,15 @@ pub extern "C" fn kmain() -> ! {
     // The guard: read memory we never mapped. This MUST fault, and the handler must survive it.
     uart.write_line("MMU: touching the unmapped guard page 0x50000000, which must fault");
     let phantom = unsafe { core::ptr::read_volatile(0x5000_0000 as *const u64) };
-    uart.write_str("MMU: FAIL the guard page was readable (value ");
-    uart.write_hex(phantom);
-    uart.write_line(") — memory we did not map must not be reachable");
-    uart.write_line("MMU: the Core continued past the guard probe");
+    // Either the read faulted (and the handler recorded it) or it succeeded — and a successful read of an unmapped
+    // page is the failure. The two paths are told apart by the flag, not by whether a line was printed.
+    if PROBE_FAULTED.load(core::sync::atomic::Ordering::SeqCst) {
+        uart.write_line("MMU: the Core continued past the guard probe — the fault was caught, the machine did not die");
+    } else {
+        uart.write_str("MMU: FAIL the guard page was readable (value ");
+        uart.write_hex(phantom);
+        uart.write_line(") — memory we did not map must not be reachable");
+    }
 
     // ---- M2b: the memory the machine owns. ----
     // SAFETY: called once, before any allocation, on the single core this rung runs on.
@@ -298,6 +303,7 @@ pub extern "C" fn exc_report(esr: u64, far: u64, elr: u64) {
     // it precisely, and the machine kept running.
     const GUARD: u64 = 0x5000_0000;
     if far == GUARD {
+        PROBE_FAULTED.store(true, core::sync::atomic::Ordering::SeqCst);
         uart.write_line("  MMU: guard page FAULTED as required — 0x50000000 is not mapped, and the Core survived it");
         // SAFETY: resume after the faulting load.
         unsafe { core::arch::asm!("msr elr_el1, {0}", in(reg) elr + 4, options(nostack)) };
