@@ -328,6 +328,18 @@ pub extern "C" fn kmain() -> ! {
     let _ = access(&uart, "task_plugin", &task_plugin, &measurement);
     uart.write_line("M1: the Core decided both directions; no task holds a capability it was not handed");
 
+    // The console can now print a whole line from one context without being spliced by another: the line is built
+    // first, then flushed under a single lock. The check is that the SAME line comes out intact through the buffer.
+    {
+        use uart::LineBuf;
+        let mut line = LineBuf::new();
+        line.push_str("CONSOLE: buffered line, ");
+        line.push_u64(2);
+        line.push_str(" tasks expected, counter at ");
+        line.push_hex(0x2a);
+        line.flush(&uart);
+    }
+
     // ---- M5c, policy half: two tasks, and the Core choosing between them. No assembly, no switch: this is the
     // decision, measured on its own so that the mechanism cannot hide a policy bug or the reverse. ----
     let mut scheduler = sched::Scheduler::new();
