@@ -44,11 +44,17 @@ impl Uart {
     }
 
     pub fn write_byte(&self, byte: u8) {
-        // SAFETY: as above. FR is read-only in normal operation; DR accepts one byte while TXFF is clear.
+        // NO FLAG POLL, AND A FIXED PACE. Measured twice on studio-linux2: the polled write wedged the machine on the
+        // longest line - FR.TXFF stayed set and the Core stopped talking mid-sentence, with the bounded escape only
+        // hiding the symptom. A console that depends on a flag clearing cannot be trusted on the boot path, so this
+        // paces the write instead: long enough for a 115200-baud FIFO to drain a byte, short enough to cost nothing.
+        // If the UART is genuinely slower than assumed, a character is dropped - and that is a visible failure, not a
+        // machine that stops.
+        for _ in 0..2_000u32 {
+            core::hint::spin_loop();
+        }
+        // SAFETY: DR is the PL011's data register at a base address chosen for the machine this image was built for.
         unsafe {
-            while read_volatile(self.reg(FR)) & TXFF != 0 {
-                core::hint::spin_loop();
-            }
             write_volatile(self.reg(DR), u32::from(byte));
         }
     }
@@ -59,6 +65,22 @@ impl Uart {
                 self.write_byte(b'\r');
             }
             self.write_byte(byte);
+        }
+    }
+
+    /// Hex, because a fault report is read by an engineer, not a person on a phone.
+    pub fn write_hex(&self, value: u64) {
+        const DIGITS: &[u8; 16] = b"0123456789abcdef";
+        self.write_str("0x");
+        let mut started = false;
+        for shift in (0..16).rev() {
+            let nibble = ((value >> (shift * 4)) & 0xf) as usize;
+            if nibble != 0 {
+                started = true;
+            }
+            if started || shift == 0 {
+                self.write_byte(DIGITS[nibble]);
+            }
         }
     }
 

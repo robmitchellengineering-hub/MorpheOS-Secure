@@ -16,3 +16,9 @@ path = "src/main.rs"
 # The mutation for M1's falsifier: grant `task_bench` the object it must be refused. If `scripts/m1.sh --self-test`
 # still passes with this on, the test is checking a string and not the Core's table.
 m1-mutant-grant = []
+# M2's falsifier hooks: `m2-test-tamper` corrupts a generation in place (the attack), and
+# `m2-mutant-skip-verify` disables verification (the mutation that must make the check go red).
+m2-test-tamper = []
+m2-mutant-skip-verify = []
+# The mutation for M2b's falsifier: accept a double free (the classic way a free list aliases memory).
+m2b-mutant-allow-double-free = []
