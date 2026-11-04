@@ -26,6 +26,7 @@ extern crate alloc;
 mod heap;
 mod cap;
 mod clock;
+mod gic;
 mod ledger;
 mod mmu;
 mod task;
@@ -51,46 +52,11 @@ static PROBE_FAULTED: core::sync::atomic::AtomicBool = core::sync::atomic::Atomi
 // and it is the only assembly the Core needs on this rung.
 global_asm!(
     r#"
-    .section .text.entry, "ax"
-    .global _start
-_start:
-    /* The stack the linker script reserved. AArch64 requires sp to stay 16-byte aligned whenever it is touched. */
-    adrp x0, stack_top
-    add  x0, x0, :lo12:stack_top
-    mov  sp, x0
+    .intel_syntax noprefix
 
-    /* Interrupts off. On this rung nothing should raise one, and an unexpected one must not become a silent halt. */
-    msr daifset, #0xf
-
-    /* FP/SIMD on at EL1. Measured the hard way: with CPACR_EL1.FPEN off (the reset default) the first compiler-emitted
-     * SIMD instruction traps, and Rust emits them for things as ordinary as a copy loop. ECU 0x07 with FAR 0 was the
-     * whole diagnosis. */
-    mrs x0, cpacr_el1
-    orr x0, x0, #(3 << 20)
-    msr cpacr_el1, x0
-    isb
-
-    /* A vector table, so a fault says WHAT faulted instead of leaving a machine that stopped with no words. Measured
-     * need: the Core died silently after the M1 verdict, which could be a hang or a fault and there was no way to
-     * tell them apart. VBAR_EL1 must be 2 KiB aligned. */
-    adrp x0, vectors
-    add  x0, x0, :lo12:vectors
-    msr vbar_el1, x0
-
-    bl   kmain
-1:  wfe
-    b    1b
-
-    .balign 2048
-vectors:
-    .rept 16
-    .balign 128
-    /* The FULL general register set. Measured: saving only x0-x3 let the Rust handler clobber the
-     * registers the resumed code depended on, so the first return from a fault resumed into garbage. The handler is
-     * ordinary Rust and is entitled to clobber x0-x18; a recovery path must give every register back.
-     * 256 bytes keeps sp 16-byte aligned. x30 is saved with the rest because `bl` overwrites it.
-     * Known gap, stated: the FP/SIMD registers are not saved. A fault taken with live FP state loses it, which is
-     * acceptable while the only recovery is a u64 probe and is the next thing to fix before real task switching. */
+    /* Save and restore every general register and lr. A handler is ordinary Rust and is entitled to clobber
+     * x0-x18, so anything less than all of them gives the resumed code garbage. */
+    .macro SAVE_ALL
     sub sp, sp, #256
     stp x0, x1, [sp, #0]
     stp x2, x3, [sp, #16]
@@ -108,10 +74,9 @@ vectors:
     stp x26, x27, [sp, #208]
     stp x28, x29, [sp, #224]
     str x30, [sp, #240]
-    mrs x0, esr_el1
-    mrs x1, far_el1
-    mrs x2, elr_el1
-    bl  exc_report
+    .endm
+
+    .macro RESTORE_ALL
     ldp x0, x1, [sp, #0]
     ldp x2, x3, [sp, #16]
     ldp x4, x5, [sp, #32]
@@ -129,8 +94,74 @@ vectors:
     ldp x28, x29, [sp, #224]
     ldr x30, [sp, #240]
     add sp, sp, #256
+    .endm
+
+    /* The fault path: name the fault, and return (the handler decides whether a return is allowed). */
+    .macro FAULT_ENTRY
+    .balign 128
+    SAVE_ALL
+    mrs x0, esr_el1
+    mrs x1, far_el1
+    mrs x2, elr_el1
+    bl  exc_report
+    RESTORE_ALL
     eret
-    .endr
+    .endm
+
+    .section .text.entry, "ax"
+    .global _start
+_start:
+    /* The stack the linker script reserved. AArch64 requires sp to stay 16-byte aligned. */
+    adrp x0, stack_top
+    add  x0, x0, :lo12:stack_top
+    mov  sp, x0
+
+    /* Interrupts off until the GIC is ready; FP/SIMD on, because the compiler emits it for ordinary copies. */
+    msr daifset, #0xf
+    mrs x0, cpacr_el1
+    orr x0, x0, #(3 << 20)
+    msr cpacr_el1, x0
+    isb
+
+    /* VBAR_EL1 must be 2 KiB aligned. */
+    adrp x0, vectors
+    add  x0, x0, :lo12:vectors
+    msr vbar_el1, x0
+    isb
+
+    bl   kmain
+1:  wfe
+    b    1b
+
+    /* The vector table, in architecture order: 0-4 faults (EL1t group), 5 IRQ (EL1h), 6-15 faults.
+     * Entry 5 is the one this machine's timer arrives on, and it is written out rather than looped so it cannot be
+     * an off-by-one. */
+    .balign 2048
+vectors:
+    FAULT_ENTRY
+    FAULT_ENTRY
+    FAULT_ENTRY
+    FAULT_ENTRY
+    FAULT_ENTRY
+    .balign 128
+    b irq_entry
+    FAULT_ENTRY
+    FAULT_ENTRY
+    FAULT_ENTRY
+    FAULT_ENTRY
+    FAULT_ENTRY
+    FAULT_ENTRY
+    FAULT_ENTRY
+    FAULT_ENTRY
+    FAULT_ENTRY
+    FAULT_ENTRY
+
+    /* The interrupt path: an interrupt is not a fault. Save, handle, restore, return. */
+irq_entry:
+    SAVE_ALL
+    bl  irq_handler
+    RESTORE_ALL
+    eret
 "#
 );
 
@@ -264,6 +295,37 @@ pub extern "C" fn kmain() -> ! {
     }
     let fired_ns = clock::ns_between(arm_start, clock::now());
     clock::disarm();
+
+    // ---- M5b interrupt half: the timer interrupts the Core, with no polling loop asking. ----
+    gic::init();
+    clock::arm_in(clock::ticks_for_ms(1));
+    let irq_start = clock::now();
+    // SAFETY: the vector table and the GIC are both in place.
+    unsafe { gic::unmask() };
+    let mut waited = 0u64;
+    while gic::ticks() < 3 {
+        if clock::ns_between(irq_start, clock::now()) > 50_000_000 {
+            break;
+        }
+        waited += 1;
+        core::hint::spin_loop();
+    }
+    let arrived = gic::ticks();
+    let irq_ns = clock::ns_between(irq_start, clock::now());
+    // SAFETY: mask interrupts again so the rest of the boot is deterministic.
+    unsafe { core::arch::asm!("msr daifset, {0}", in(reg) 2u64, options(nostack)) };
+    if arrived >= 3 {
+        uart.write_str("TICK: the Core was INTERRUPTED 0x");
+        uart.write_hex(arrived);
+        uart.write_str(" times by the timer, 0x");
+        uart.write_hex(irq_ns);
+        uart.write_line(" ns after unmasking (no polling: the interrupts arrived on their own)");
+        uart.write_line("TICK: the tick is real — a real-time class can be built on it");
+    } else {
+        uart.write_str("TICK: FAIL only 0x");
+        uart.write_hex(arrived);
+        uart.write_line(" timer interrupts arrived in 50 ms — the interrupt path is not working");
+    }
     if fired {
         uart.write_str("TICK: the EL1 timer fired, 0x");
         uart.write_hex(fired_ns);
