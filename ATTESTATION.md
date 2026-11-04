@@ -1,5 +1,8 @@
 # Attestation — what MorpheOS can prove about itself, and what it cannot
 
+> **Carried from the security arm, 2026-10-31.** Written against the earlier, Linux-based arm, and kept here because what it states — what a machine can prove about itself, and exactly where the claim stops — is the standard the Core must meet. Documents it cites that stayed in the MorpheOS repository are linked by URL.
+
+
 Rob, 2026-10-31: *"what if there was a 3rd better option built for today, MorpheOS"*.
 
 Every operating system asks to be trusted and shows you a logo. The thing a third platform can do that the
@@ -75,7 +78,7 @@ with root can sign a lie. What it gives you is a *claim with an author and a sea
 
 **What would make it a real proof:** measured boot — `IMA` over the kernel, initramfs and early userspace,
 with the measurements extended into a TPM PCR and the key sealed to that PCR state. That is **K3** of
-[the Secure arm](26-secure-arm.md) ([ADR 0022](adr/0022-own-the-kernel-build.md)): our kernel already carries `CONFIG_IMA=y` and
+[the Secure arm](https://github.com/robmitchellengineering-hub/MorpheOS/blob/main/docs/26-secure-arm.md) ([ADR 0022](https://github.com/robmitchellengineering-hub/MorpheOS/blob/main/docs/adr/0022-own-the-kernel-build.md)): our kernel already carries `CONFIG_IMA=y` and
 `CONFIG_INTEGRITY_SIGNATURE=y`. Until then this document says "signed claim", never "proof of integrity".
 
 ## Why a platform needs this

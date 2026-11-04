@@ -1,5 +1,8 @@
 # Sealed state — what "prove what it did" means, and where it stops
 
+> **Carried from the security arm, 2026-10-31.** Written against the earlier, Linux-based arm, and kept here because what it states — what a machine can prove about itself, and exactly where the claim stops — is the standard the Core must meet. Documents it cites that stayed in the MorpheOS repository are linked by URL.
+
+
 `morph-session` gives a person a session whose every change is signed. This document says exactly what that
 buys, and what it does not, because the alternative — a feature that sounds like integrity — is how trust gets
 misplaced.

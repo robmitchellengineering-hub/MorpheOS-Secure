@@ -8,8 +8,8 @@ our custom kernal that is its own thing a new type of computer."*
 
 ## What this repository is
 
-The secure edition, with **Morph** as its kernel: capability-based, Rust, high-assurance first. `KERNEL.md` is its
-scope and its first rung. **No line of Morph exists** — that sentence is in the README, in the kernel document and
+The secure edition, with **the Core** (`morph-core`) as its privileged component: capability-based, Rust, high-assurance first. `CORE.md` is its
+scope and its first rung. **No line of the Core exists** — that sentence is in the README, in the kernel document and
 here, because the alternative is what this session kept doing: treating a built-and-renamed Linux as if it were
 the destination.
 

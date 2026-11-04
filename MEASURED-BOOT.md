@@ -1,5 +1,8 @@
 # Measured boot — what this machine can prove about what it booted
 
+> **Carried from the security arm, 2026-10-31.** Written against the earlier, Linux-based arm, and kept here because what it states — what a machine can prove about itself, and exactly where the claim stops — is the standard the Core must meet. Documents it cites that stayed in the MorpheOS repository are linked by URL.
+
+
 This document exists because the honest answer today is **less than the phase is called**. It records what is
 true on this platform right now, with the commands that show it, and what remains before "measured boot" means
 what people assume.
