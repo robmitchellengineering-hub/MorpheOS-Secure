@@ -269,9 +269,10 @@ fn task_entry() -> u64 {
 pub extern "C" fn irq_switch(sp: usize) -> usize {
     // SAFETY: the vector entry saves and restores every register, and the GIC is initialised before unmask().
     unsafe { gic::handle() };
-    // No switch yet: the frame that came in is the frame that goes back. The signature is the point - it is what the
-    // scheduler will answer with a different frame, and it costs nothing to have it now.
-    sp
+    // THE SWITCH, in one call: record the frame that was interrupted and answer with the one to resume from. While
+    // switching is off this returns `sp` unchanged, so every existing gate must produce exactly the same result — and
+    // that is what this commit is measured against.
+    sched::on_irq(sp)
 }
 
 /// The second task's entry: it prints once and halts, which is enough to prove it was ever run.
