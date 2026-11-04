@@ -54,6 +54,14 @@ _start:
     /* Interrupts off. On this rung nothing should raise one, and an unexpected one must not become a silent halt. */
     msr daifset, #0xf
 
+    /* FP/SIMD on at EL1. Measured the hard way: with CPACR_EL1.FPEN off (the reset default) the first compiler-emitted
+     * SIMD instruction traps, and Rust emits them for things as ordinary as a copy loop. ECU 0x07 with FAR 0 was the
+     * whole diagnosis. */
+    mrs x0, cpacr_el1
+    orr x0, x0, #(3 << 20)
+    msr cpacr_el1, x0
+    isb
+
     /* A vector table, so a fault says WHAT faulted instead of leaving a machine that stopped with no words. Measured
      * need: the Core died silently after the M1 verdict, which could be a hang or a fault and there was no way to
      * tell them apart. VBAR_EL1 must be 2 KiB aligned. */
@@ -175,6 +183,7 @@ pub extern "C" fn exc_report(esr: u64, far: u64, elr: u64) -> ! {
         0x01 => "trapped WFI or WFE",
         0x0e => "illegal execution state",
         0x15 => "SVC (a syscall on a machine that has none)",
+        0x07 => "trapped SIMD/FP access (CPACR_EL1.FPEN is off)",
         0x20 | 0x21 => "instruction abort (lower/current EL)",
         0x22 => "PC alignment fault",
         0x24 | 0x25 => "data abort (lower/current EL)",
