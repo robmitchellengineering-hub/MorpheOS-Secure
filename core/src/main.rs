@@ -515,6 +515,37 @@ pub extern "C" fn kmain() -> ! {
             }
             _ => uart.write_line("CERT: FAIL a certificate that lied was accepted"),
         }
+        // THE LEDGER REFUSES WHAT CANNOT PROVE ITSELF. This is the rung's purpose: a generation that cannot show it
+        // fits the budget does not become history - the head does not move, and the refusal names the term.
+        let mut budgeted = ledger::Ledger::empty();
+        match budgeted.apply_certified(0xD0D0, &fitting) {
+            Ok((id, ppm)) => {
+                let mut l = uart::LineBuf::new();
+                l.push_str("CERT: generation ");
+                l.push_u64(id as u64);
+                l.push_str(" applied with a certificate at ");
+                l.push_u64(ppm);
+                l.push_str(" ppm");
+                l.flush(&uart);
+            }
+            Err(_) => uart.write_line("CERT: FAIL a certified generation was refused"),
+        }
+        let head_before = budgeted.head_id();
+        match budgeted.apply_certified(0xBAD, &too_big) {
+            Err(crate::cert::Rejected::OverBudget { largest }) => {
+                let mut l = uart::LineBuf::new();
+                l.push_str("CERT: a generation was REFUSED — ");
+                l.push_str(largest);
+                l.push_str(" broke the budget, and the ledger's head did not move (");
+                l.push_u64(head_before as u64);
+                l.push_str(" -> ");
+                l.push_u64(budgeted.head_id() as u64);
+                l.push_str(")");
+                l.flush(&uart);
+            }
+            _ => uart.write_line("CERT: FAIL an uncertified generation became history"),
+        }
+
         let (used_after, _, _) = ALLOCATOR.stats();
         let mut l = uart::LineBuf::new();
         l.push_str("CERT: bounded — allocator use before ");

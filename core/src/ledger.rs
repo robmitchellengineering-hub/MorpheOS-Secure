@@ -84,6 +84,23 @@ impl Ledger {
         id
     }
 
+    /// Append a generation ONLY if it carries a certificate the Core accepts. This is the rung's whole point: a
+    /// generation that cannot prove it fits the deadline budget does not become history at all — the ledger's head does
+    /// not move, and the refusal names the term that broke it.
+    pub fn apply_certified(
+        &mut self,
+        payload: u64,
+        cert: &crate::cert::Certificate,
+    ) -> Result<(u32, u64), crate::cert::Rejected> {
+        let ppm = crate::cert::check(cert)?;
+        Ok((self.apply(payload), ppm))
+    }
+
+    /// The current generation's id, so a refusal can show that the head did not move.
+    pub fn head_id(&self) -> u32 {
+        self.head
+    }
+
     /// Read the current state — but only if its generation checks out. A corrupted head is refused, not returned.
     pub fn read(&self, generation: u32) -> Result<u64, Tampered> {
         let g = self.slot(generation).ok_or(Tampered { generation })?;
