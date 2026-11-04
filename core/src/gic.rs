@@ -70,9 +70,25 @@ pub unsafe fn handle() -> u32 {
     // SAFETY: GICC_IAR acknowledges the highest-priority interrupt; GICC_EOIR ends it.
     let intid = unsafe { core::ptr::read_volatile(GICC_IAR as *const u32) } & 0x3ff;
     if intid == TIMER_INTID {
+        let n = ticks() + 1;
         // SAFETY: single writer.
-        unsafe { core::ptr::write_volatile(core::ptr::addr_of_mut!(TICKS), ticks() + 1) };
+        unsafe { core::ptr::write_volatile(core::ptr::addr_of_mut!(TICKS), n) };
+
+        // RE-ARM BEFORE THE EOI, deliberately. The timer's interrupt is level-triggered on its condition, so if the
+        // condition is not cleared before the interrupt is ended, the GIC asserts it again immediately and the CPU
+        // never returns to what it was doing - an interrupt storm that looks exactly like a hang at unmask, which is
+        // what the boot showed. Order matters, and it is stated here because the symptom is invisible.
         crate::clock::arm_in(crate::clock::ticks_for_ms(1));
+
+        if n == 1 {
+            let uart = crate::uart::Uart::at(crate::uart::UART_QEMU_VIRT);
+            uart.write_line("IRQ: the first timer interrupt arrived — the Core was interrupted, not polled");
+        }
+        if n == 1000 {
+            let uart = crate::uart::Uart::at(crate::uart::UART_QEMU_VIRT);
+            uart.write_line("IRQ: STORM — 1000 interrupts, disabling the timer so the boot can continue");
+            crate::clock::disarm();
+        }
     }
     // SAFETY: EOI for the interrupt just acknowledged.
     unsafe { core::ptr::write_volatile(GICC_EOIR as *mut u32, intid) };
