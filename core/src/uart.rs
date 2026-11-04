@@ -7,23 +7,6 @@
 //! Polled, 8N1, no interrupts: M0 has one writer and nothing else to do.
 
 use core::ptr::{read_volatile, write_volatile};
-use core::sync::atomic::{AtomicBool, Ordering};
-
-/// One writer at a time. Measured: two tasks sharing the console interleaved mid-line, so the log said
-/// "TASK B:PREEMPT: switching enabled … ran" and no gate could read it. A lock fixes that.
-///
-/// It is a TRY-lock, deliberately: the interrupt handler prints too, and a handler that spins on a lock held by the
-/// task it interrupted deadlocks the machine. A line is a diagnostic, not a guarantee — dropping one is survivable,
-/// wedging the Core is not.
-static CONSOLE: AtomicBool = AtomicBool::new(false);
-
-fn try_lock() -> bool {
-    CONSOLE.compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed).is_ok()
-}
-
-fn unlock() {
-    CONSOLE.store(false, Ordering::Release);
-}
 
 /// QEMU `virt`: PL011.
 pub const UART_QEMU_VIRT: usize = 0x0900_0000;
@@ -77,15 +60,6 @@ impl Uart {
     }
 
     pub fn write_str(&self, text: &str) {
-        // Guarded, so a line is not spliced into another context's line.
-        if !try_lock() {
-            return;
-        }
-        self.write_str_unlocked(text);
-        unlock();
-    }
-
-    fn write_str_unlocked(&self, text: &str) {
         for byte in text.bytes() {
             if byte == b'\n' {
                 self.write_byte(b'\r');
@@ -111,16 +85,6 @@ impl Uart {
     }
 
     pub fn write_line(&self, text: &str) {
-        // The whole line under one lock, so it cannot be split by a switch or an interrupt.
-        if !try_lock() {
-            return;
-        }
-        self.write_str_unlocked(text);
-        self.write_byte(b'\n');
-        unlock();
-    }
-
-    fn write_line_unused(&self, text: &str) {
         self.write_str(text);
         self.write_byte(b'\n');
     }
