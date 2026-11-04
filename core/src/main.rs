@@ -226,7 +226,14 @@ fault_entry:
 
 irq_entry:
     SAVE_ALL
-    bl  irq_handler
+
+    /* The handler is given the frame it just saved, and returns the frame to resume from. Today it returns the same
+     * one, so behaviour is identical to before this commit - which is exactly the point: the plumbing is measured
+     * before anything uses it. When the switch lands, this is the only line that changes meaning. */
+    mov x0, sp
+    bl  irq_switch
+    mov sp, x0
+
     RESTORE_ALL
     eret
 
@@ -259,9 +266,12 @@ fn task_entry() -> u64 {
 /// It acknowledges the interrupt, counts it, re-arms the timer and end-of-interrupts. It does not schedule: on this rung
 /// the tick only counts, and preemption is the rung that uses it.
 #[unsafe(no_mangle)]
-pub extern "C" fn irq_handler() {
+pub extern "C" fn irq_switch(sp: usize) -> usize {
     // SAFETY: the vector entry saves and restores every register, and the GIC is initialised before unmask().
     unsafe { gic::handle() };
+    // No switch yet: the frame that came in is the frame that goes back. The signature is the point - it is what the
+    // scheduler will answer with a different frame, and it costs nothing to have it now.
+    sp
 }
 
 /// The second task's entry: it prints once and halts, which is enough to prove it was ever run.
