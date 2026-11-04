@@ -291,11 +291,15 @@ pub extern "C" fn kmain() -> ! {
     }
 
     // ---- M5b interrupt half: the timer interrupts the Core, with no polling loop asking. ----
+    uart.write_line("IRQ: about to bring up the GICv2");
     gic::init();
+    uart.write_line("IRQ: the GIC is up (distributor + CPU interface + PPI 30)");
     clock::arm_in(clock::ticks_for_ms(1));
+    uart.write_line("IRQ: the timer is armed for 1 ms");
     let irq_start = clock::now();
     // SAFETY: the vector table and the GIC are both in place.
     unsafe { gic::unmask() };
+    uart.write_line("IRQ: interrupts are unmasked — anything that arrives from here is the machine's, not a poll");
     let mut waited = 0u64;
     while gic::ticks() < 3 {
         if clock::ns_between(irq_start, clock::now()) > 50_000_000 {
