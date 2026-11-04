@@ -167,7 +167,7 @@ pub extern "C" fn kmain() -> ! {
     ledger::report(&uart, &mut machine);
 
     // ---- M3a: the MMU. Our page tables, our translation regime, and a guard page that must fault. ----
-    uart.write_line("MMU: building our own tables (Device 0..1G, Normal 0x4000_0000..0x5000_0000, guard at 0x5000_0000)");
+    uart.write_line("MMU: building our own tables (Device 0..1G, Normal 0x4000_0000..0x4F00_0000, guard at 0x4F00_0000)");
     mmu::build();
     // SAFETY: the tables are built and the identity map covers this code, the stack and the arena.
     unsafe { mmu::enable() };
@@ -306,7 +306,7 @@ pub extern "C" fn exc_report(esr: u64, far: u64, elr: u64) {
     // recognises that address, says so, and resumes after the faulting instruction (a load is 4 bytes). Everything
     // else is fatal. This is containment demonstrated: the Core touched memory it did not map, the machine reported
     // it precisely, and the machine kept running.
-    const GUARD: u64 = 0x5000_0000;
+    const GUARD: u64 = 0x4F00_0000;
     if far == GUARD {
         PROBE_FAULTED.store(true, core::sync::atomic::Ordering::SeqCst);
         uart.write_line("  MMU: guard page FAULTED as required — 0x50000000 is not mapped, and the Core survived it");

@@ -56,8 +56,12 @@ pub fn build() {
             device.0[i] = (i as u64 * BLOCK) | DESC_VALID | DESC_BLOCK | DESC_AF | DESC_ATTR0 | DESC_SH_NONE;
         }
 
-        // RAM: 256 MiB of Normal memory at 0x4000_0000, inner-shareable, MAIR index 1, write-back.
-        let ram_blocks = 256 * 1024 * 1024 / BLOCK; // 128 blocks
+        // RAM: Normal memory at 0x4000_0000, inner-shareable, MAIR index 1, write-back — but only up to 0x4F00_0000.
+        // The guard lives INSIDE physical RAM on purpose: a page beyond the end of RAM, when it is mapped, produces an
+        // external abort (no device answers) rather than a permission fault, and the two are indistinguishable to a
+        // handler that only knows the address. Measured: that is exactly how the mutation's self-test first failed to
+        // show a difference.
+        let ram_blocks = 120; // 0x4000_0000 .. 0x4F00_0000, and block 120 (0x4F00_0000) is the guard
         for i in 0..ram_blocks {
             ram.0[i as usize] = (0x4000_0000 + i * BLOCK)
                 | DESC_VALID
@@ -67,8 +71,8 @@ pub fn build() {
                 | DESC_SH_INNER;
         }
 
-        // The guard: 0x5000_0000 (block 128 of the RAM table) is deliberately left zero — invalid. Measured: with
-        // `mmu-mutant-map-guard`, this one line is what the mutation turns on, and the fault must then disappear.
+        // The guard: 0x4F00_0000 (block 120) is deliberately left zero — invalid. With `mmu-mutant-map-guard`, this
+        // one line is what the mutation turns on, and the fault must then disappear.
         if cfg!(feature = "mmu-mutant-map-guard") {
             ram.0[ram_blocks as usize] =
                 0x4000_0000 + ram_blocks * BLOCK | DESC_VALID | DESC_BLOCK | DESC_AF | DESC_ATTR1 | DESC_SH_INNER;
