@@ -392,6 +392,35 @@ fn boot_epilogue(uart: &Uart) {
     task_a_entry(&uart);
 }
 
+/// The device tree demonstration, run ONLY when the firmware actually passed a tree. Measured: running it on every boot
+/// turned the preemption gate red, because the fifteen ELF gates have no tree and the demo still took the console at a
+/// moment their own two-task demo wanted it. A gate's environment must be identical to the one it was proven in.
+fn fdt_demo(uart: &Uart) {
+
+    let dtb = unsafe { DTB_POINTER };
+    let mut l = uart::LineBuf::new();
+    l.push_str("FDT: the firmware's device tree is at ");
+    l.push_hex(dtb as u64);
+    l.flush(&uart);
+    match fdt::find_compatible(dtb, "arm,pl011") {
+        Ok(a) => {
+            let mut l = uart::LineBuf::new();
+            l.push_str("FDT: arm,pl011 at ");
+            l.push_hex(a.base);
+            l.push_str(" — the constant this boot uses is ");
+            l.push_hex(uart::UART_QEMU_VIRT as u64);
+            l.flush(&uart);
+            if a.base == uart::UART_QEMU_VIRT as u64 {
+                uart.write_line("FDT: the tree AGREES with the constant — on the Pi the tree wins");
+            } else {
+                uart.write_line("FDT: the tree DISAGREES with the constant — the tree is right");
+            }
+        }
+        Err(_) => uart.write_line("FDT: FAIL no arm,pl011 node was found in the tree"),
+    }
+
+}
+
 /// The Core's first instruction in Rust.
 #[unsafe(no_mangle)]
 pub extern "C" fn kmain() -> ! {
@@ -434,29 +463,10 @@ pub extern "C" fn kmain() -> ! {
         line.flush(&uart);
     }
 
-    // ---- M0b preparation: ask the MACHINE where its UART is, rather than reciting it. ----
-    {
-        let dtb = unsafe { DTB_POINTER };
-        let mut l = uart::LineBuf::new();
-        l.push_str("FDT: the firmware's device tree is at ");
-        l.push_hex(dtb as u64);
-        l.flush(&uart);
-        match fdt::find_compatible(dtb, "arm,pl011") {
-            Ok(a) => {
-                let mut l = uart::LineBuf::new();
-                l.push_str("FDT: arm,pl011 at ");
-                l.push_hex(a.base);
-                l.push_str(" — the constant this boot uses is ");
-                l.push_hex(uart::UART_QEMU_VIRT as u64);
-                l.flush(&uart);
-                if a.base == uart::UART_QEMU_VIRT as u64 {
-                    uart.write_line("FDT: the tree AGREES with the constant — on the Pi the tree wins");
-                } else {
-                    uart.write_line("FDT: the tree DISAGREES with the constant — the tree is right");
-                }
-            }
-            Err(_) => uart.write_line("FDT: FAIL no arm,pl011 node was found in the tree"),
-        }
+    // ---- M0b: ask the MACHINE where its UART is. Only the Image path has a tree; every ELF gate behaves exactly as
+    // it did before this was written. ----
+    if unsafe { DTB_POINTER } != 0 {
+        fdt_demo(&uart);
     }
 
     // ---- M7d: a box is validated ONCE at load. If its claim holds, it runs without a mask per access — which is the
