@@ -187,6 +187,16 @@ fn task_entry() -> u64 {
     result
 }
 
+/// The interrupt handler, called by the vector entry with the interrupted context already saved.
+///
+/// It acknowledges the interrupt, counts it, re-arms the timer and end-of-interrupts. It does not schedule: on this rung
+/// the tick only counts, and preemption is the rung that uses it.
+#[unsafe(no_mangle)]
+pub extern "C" fn irq_handler() {
+    // SAFETY: the vector entry saves and restores every register, and the GIC is initialised before unmask().
+    unsafe { gic::handle() };
+}
+
 /// Where an aborted task leaves the machine: the Core's stack is back, the violation is already written, and the boot
 /// carries on. This never returns, which is why the switch needs to park only a stack pointer.
 extern "C" fn after_task_aborted() -> ! {
