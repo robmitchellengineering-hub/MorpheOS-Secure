@@ -27,6 +27,7 @@ mod heap;
 mod cap;
 mod clock;
 mod gic;
+mod sched;
 mod ledger;
 mod mmu;
 mod task;
@@ -272,6 +273,34 @@ pub extern "C" fn kmain() -> ! {
     let _ = access(&uart, "task_plugin", &task_plugin, &plugin_state);
     let _ = access(&uart, "task_plugin", &task_plugin, &measurement);
     uart.write_line("M1: the Core decided both directions; no task holds a capability it was not handed");
+
+    // ---- M5c, policy half: two tasks, and the Core choosing between them. No assembly, no switch: this is the
+    // decision, measured on its own so that the mechanism cannot hide a policy bug or the reverse. ----
+    let mut scheduler = sched::Scheduler::new();
+    scheduler.admit(sched::TaskId(0));
+    scheduler.admit(sched::TaskId(1));
+    uart.write_line("SCHED: two tasks admitted, both ready");
+    let mut sequence = [0u8; 6];
+    for slot in sequence.iter_mut() {
+        match scheduler.pick_next() {
+            Some(task) => *slot = b'0' + task.0 as u8,
+            None => *slot = b'x',
+        }
+    }
+    let expected = *b"101010";
+    if sequence == expected {
+        uart.write_line("SCHED: picks 1,0,1,0,1,0 — the choice alternates, so a second task really runs");
+    } else {
+        uart.write_str("SCHED: FAIL the choice did not alternate: ");
+        for byte in sequence.iter() {
+            uart.write_byte(*byte);
+            uart.write_byte(b' ');
+        }
+        uart.write_line("");
+    }
+    uart.write_str("SCHED: switches recorded: 0x");
+    uart.write_hex(scheduler.switches());
+    uart.write_line("");
 
     // ---- M5a: the machine's clock. The counter every deadline will be measured against. ----
     let freq = clock::frequency();

@@ -34,3 +34,5 @@ task-mutant-share-tables = []
 tick-mutant-frozen = []
 # M5b's mutation: arm the timer so far out that it cannot fire inside the test.
 tick-mutant-armed-far = []
+# M5c's policy mutation: always pick task 0, which looks like a scheduler and never runs anything else.
+sched-mutant-always-first = []
