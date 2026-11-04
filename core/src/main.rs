@@ -421,6 +421,56 @@ fn fdt_demo(uart: &Uart) {
 
 }
 
+/// M0c's demonstration: the boot decision exercised through the five states that matter, printed so a person can read
+/// what the machine decided rather than trusting that it decided well.
+fn ab_demo(uart: &Uart) {
+    let mut all_ok = true;
+
+    let mut fresh = ab::Record::fresh();
+    let d = ab::choose(&fresh);
+    let ok = d.boot == ab::Slot::A && !d.is_trial;
+    all_ok &= ok;
+    uart.write_line(if ok { "AB: a fresh record boots A" } else { "AB: FAIL a fresh record did not boot A" });
+
+    let trial_offered = ab::propose(&mut fresh, ab::Slot::B);
+    let d = ab::choose(&fresh);
+    let ok = trial_offered && d.boot == ab::Slot::B && d.is_trial;
+    all_ok &= ok;
+    uart.write_line(if ok { "AB: a new generation is tried ONCE, as a trial" } else { "AB: FAIL the trial was not offered" });
+
+    ab::settle(&mut fresh, d, true);
+    let ok = fresh.active == ab::Slot::B.id() && fresh.trial == 0;
+    all_ok &= ok;
+    uart.write_line(if ok { "AB: a healthy trial commits and becomes the good generation" } else { "AB: FAIL a healthy trial did not commit" });
+
+    // The case the whole rung exists for: the new generation boots, does NOT report healthy, and the machine must come
+    // back to the generation that worked - with the record saying which one failed.
+    let mut failed = ab::Record::fresh();
+    ab::propose(&mut failed, ab::Slot::B);
+    let d = ab::choose(&failed);
+    ab::settle(&mut failed, d, false);
+    let d2 = ab::choose(&failed);
+    let ok = d2.boot == ab::Slot::A && d2.fell_back && failed.tried == ab::Slot::B.id() && failed.active == ab::Slot::A.id();
+    all_ok &= ok;
+    uart.write_line(if ok {
+        "AB: an unhealthy trial falls back to the good generation, and the record remembers it"
+    } else {
+        "AB: FAIL an unhealthy trial became permanent"
+    });
+
+    let corrupt = ab::Record { magic: 0, active: 9, trial: 7, attempts_left: 5, tried: 0 };
+    let repaired = ab::Record::read(corrupt);
+    let ok = repaired == ab::Record::fresh();
+    all_ok &= ok;
+    uart.write_line(if ok { "AB: a corrupt record boots the safe generation instead of a guess" } else { "AB: FAIL a corrupt record was trusted" });
+
+    uart.write_line(if all_ok {
+        "AB: the boot path is a decision, and it never commits what did not report healthy"
+    } else {
+        "AB: FAIL the boot decision is not what it claims"
+    });
+}
+
 /// The Core's first instruction in Rust.
 #[unsafe(no_mangle)]
 pub extern "C" fn kmain() -> ! {
@@ -489,6 +539,8 @@ pub extern "C" fn kmain() -> ! {
                 l.push_str(", no per-access mask needed");
                 l.flush(&uart);
             }
+
+    ab_demo(&uart);
             Err(_) => uart.write_line("BOX: FAIL an honest box was refused"),
         }
         let lying = box_admission::BoxRequest {
