@@ -204,7 +204,7 @@ off, pkts = 24, []
 while off + 16 <= len(d):
     _, _, incl, _ = struct.unpack_from('<IIII', d, off); off += 16
     f = d[off:off + incl]; off += incl
-    if len(f) >= 54 and f[12:14] == b'\x08\x00' and f[23] == 17 and f[42] == 0x80:
+    if len(f) >= 54 and f[12:14] == b'\x08\x00' and f[23] == 17 and f[42] == 0x90:
         if f[50:54] != bytes([0xDE, 0xAD, 0xBE, 0xEF]):
             continue  # the demo stream only; the engine uses a different SSRC
         seq = (f[44] << 8) | f[45]
