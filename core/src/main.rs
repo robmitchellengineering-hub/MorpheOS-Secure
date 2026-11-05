@@ -53,6 +53,12 @@ use uart::{Uart, UART_QEMU_VIRT};
 pub static mut DTB_POINTER: usize = 0;
 
 /// The line M0 asserts. One place, so the test and the Core cannot disagree.
+/// Milestone 1 of the loader: a foreign function, as raw AArch64 bytes, in the executable text section. It is
+/// `mov x0, #0x42; ret` — returns 66 and nothing else, so the only way the boot prints 66 is that the CPU ran these
+/// bytes. No absolute addresses, no UART access: position-independent by construction.
+#[unsafe(link_section = ".text")]
+static LOADED_CODE: [u32; 2] = [0xD280_0840, 0xD65F_03C0];
+
 pub const BANNER: &str = "MORPHEOS-CORE 0.0.1: the Core is running on aarch64; no Linux, no syscalls, no processes";
 pub const DONE: &str = "MORPHEOS-CORE: reported; halting";
 
@@ -824,6 +830,19 @@ pub extern "C" fn kmain() -> ! {
     uart.init();
 
     uart.write_line(BANNER);
+    // THE LOADER, MILESTONE 1. Jump to bytes the compiler did not place here, call them, and read the return. The
+    // claim is not "it compiled" but "the CPU executed bytes it was handed at runtime".
+    {
+        // SAFETY: the code is in .text, position-independent, and returns via ret.
+        let loaded: unsafe extern "C" fn() -> u64 = unsafe {
+            core::mem::transmute(core::ptr::addr_of!(LOADED_CODE) as *const ())
+        };
+        let result = unsafe { loaded() };
+        let mut l = uart::LineBuf::new();
+        l.push_str("LOAD: jumped to loaded code, it returned ");
+        l.push_u64(result);
+        l.flush(&uart);
+    }
 
     ab_demo(&uart);
     uart.write_line("MORPHEOS-CORE: EL1, MMU off, load address 0x40080000");
