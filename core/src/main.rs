@@ -69,11 +69,11 @@ static mut LOAD_BUF: [u8; 8] = [0u8; 8];
 /// are live, so its syscalls have subjects. Load early, execute late.
 static ELF_ENTRY: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
 /// The buffer the loader reads the program's ELF into, before placing its
-/// PT_LOAD segments at 0x40200000. 512 KiB: the engine closure the program now
-/// links is a ~326 KiB ELF, and this is in .bss (the Core's stack is only
-/// 64 KiB, so a stack local would overflow). The Core's image stays well under
-/// 0x40200000 with this in place.
-static mut ELF_BUF: [u8; 524_288] = [0; 524_288];
+/// PT_LOAD segments at 0x40200000. 256 KiB: the program's loadable segments end
+/// ~208 KiB into the file (the rest is section headers/symbols the loader never
+/// touches), and this is in .bss — the Core's stack is only 64 KiB, so a stack
+/// local would overflow.
+static mut ELF_BUF: [u8; 262_144] = [0; 262_144];
 /// The network device base and the two MACs, threaded out of the network demo so a loaded program's send_udp can use them.
 static NET_BASE: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
 static OUR_MAC: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
@@ -599,12 +599,12 @@ fn fdt_demo(uart: &Uart) {
                                     }
                                         // ELF LOAD. Read the ELF off the disk, place its PT_LOAD segment at the declared address, and call the entry.
                                         // The result (66) can only appear if a COMPILED program was placed in memory and executed.
-                                        // 1024 sectors (512 KiB) — the program links the whole engine closure, so its ELF is
-                                        // ~326 KiB. The buffer must cover the whole file up to the last PT_LOAD segment, or
-                                        // elf::load reads past it.
+                                        // 512 sectors (256 KiB) — the program's loadable segments end ~208 KiB into the
+                                        // file; the buffer must cover up to the last PT_LOAD segment, or elf::load reads
+                                        // past it.
                                         let mut sec = [0u8; 512];
                                         let mut elf_ok = true;
-                                        for s in 0..1024usize {
+                                        for s in 0..512usize {
                                             if let Ok(0) = blk::read_sector(&blk, 4 + s as u64, &mut sec) {
                                                 unsafe {
                                                     ELF_BUF[s * 512..(s + 1) * 512].copy_from_slice(&sec);
@@ -1132,7 +1132,7 @@ pub extern "C" fn svc_handler(frame: *mut u64) {
                     ALLOCATOR.init();
                 }
                 let size = arg0 as usize;
-                if size == 0 || size > 640 * 1024 {
+                if size == 0 || size > 768 * 1024 {
                     uart.write_line("SVC: alloc refused — the size is not a request");
                     0
                 } else {
