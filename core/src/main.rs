@@ -160,14 +160,24 @@ global_asm!(
     add sp, sp, #288
     .endm
 
-    /* The fault path: name the fault, and return (the handler decides whether a return is allowed). */
+    /* The sync path. An SVC (EC 0x15) is a CALL, not a fault: route it to svc_handler with the frame pointer in x0, and
+       let the handler write the result back into the saved x0. A real fault goes to exc_report. Measured by design: the
+       loaded program runs at EL1, so its `svc` traps here, into the same entry that reports faults. */
     .macro FAULT_ENTRY
     .balign 128
     SAVE_ALL
     mrs x0, esr_el1
+    lsr x3, x0, #26
+    cmp x3, #0x15
+    b.eq 1f
     mrs x1, far_el1
     mrs x2, elr_el1
     bl  exc_report
+    b   2f
+1:
+    mov x0, sp
+    bl  svc_handler
+2:
     RESTORE_ALL
     eret
     .endm
@@ -897,6 +907,24 @@ fn ab_demo(uart: &Uart) {
     } else {
         "AB: FAIL the boot decision is not what it claims"
     });
+}
+
+/// The syscall dispatcher. The loaded program traps here via `svc`; x0 in the frame is the syscall number, and the
+/// result is written back into the saved x0 so RESTORE_ALL hands it to the caller. This is the API surface: the first
+/// call is `report` (0), which proves a loaded program can ask the Core for a service and read the answer.
+#[unsafe(no_mangle)]
+pub extern "C" fn svc_handler(frame: *mut u64) {
+    unsafe {
+        let n = core::ptr::read_volatile(frame);
+        let result = match n {
+            0 => {
+                crate::uart::Uart::at(crate::uart::base()).write_line("SVC: the loaded program asked the Core for service");
+                0
+            }
+            _ => u64::MAX, // unknown syscall: the caller sees an error, not a guess
+        };
+        core::ptr::write_volatile(frame, result);
+    }
 }
 
 /// The Core's first instruction in Rust.
