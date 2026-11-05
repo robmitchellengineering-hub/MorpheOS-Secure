@@ -64,5 +64,7 @@ udp-mutant-ignore-length = []
 rtp-mutant-frozen-seq = []
 # Loader mutation: the loaded code returns the wrong value, so the gate can fail when execution is wrong.
 load-mutant-wrong-result = []
+# GICv3 (the Pi 5 GIC-600): system-register CPU interface instead of GICv2 MMIO.
+gic-v3 = []
 # Real-LAN address for the pacland wired test: 192.168.15.42, gateway .1.
 net-lan-19216815 = []
