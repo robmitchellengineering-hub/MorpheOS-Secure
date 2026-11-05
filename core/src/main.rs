@@ -425,7 +425,30 @@ fn fdt_demo(uart: &Uart) {
             l.flush(&uart);
             if a.base == uart::UART_QEMU_VIRT as u64 {
                 uart.write_line("FDT: the tree AGREES with the constant — on the Pi the tree wins");
+            }         // Can the Core even SEE the window? Three words of the virtio-mmio header answer it: magic ("virt"), version,
+        // and device id. If the page tables do not map it, this faults and the handler says so - which is also an answer.
+        if let Ok(a) = fdt::find_compatible(dtb, "virtio,mmio") {
+            let base = a.base as usize;
+            // SAFETY: the address came from the firmware's own tree; a fault here is the measurement.
+            let (magic, version, device) = unsafe {
+                let w = |off: usize| core::ptr::read_volatile((base + off) as *const u32);
+                (w(0x000), w(0x004), w(0x008))
+            };
+            let mut l = uart::LineBuf::new();
+            l.push_str("NET: header magic ");
+            l.push_hex(magic as u64);
+            l.push_str(" version ");
+            l.push_u64(version as u64);
+            l.push_str(" device id ");
+            l.push_u64(device as u64);
+            l.flush(uart);
+            if magic == 0x7472_6976 && version == 2 && device == 1 {
+                uart.write_line("NET: a virtio-net device is reachable and says what it is");
             } else {
+                uart.write_line("NET: the window is reachable but is not a modern virtio-net");
+            }
+        }
+else {
                 uart.write_line("FDT: the tree DISAGREES with the constant — the tree is right");
             }
         }
