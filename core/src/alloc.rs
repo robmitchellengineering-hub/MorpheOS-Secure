@@ -105,19 +105,21 @@ impl FirstFit {
             // `want + HEADER` here refused to reuse an exactly-sized hole - measured: the freed 32-byte cue list was
             // skipped by the next 32-byte allocation.
             if node.magic == FREE && node.size >= want {
-                let remainder = node.size - want - HEADER;
-                if remainder >= 128 {
-                    // Split: the tail becomes a new free block.
-                    // SAFETY: `remainder` bytes were verified to be inside this block.
-                    let split = unsafe { (cursor.cast::<u8>().add(HEADER + want)).cast::<Header>() };
-                    unsafe {
-                        ptr::write(split, Header { magic: FREE, size: remainder, next: node.next, _pad: [0; 104] });
+                // Split only when the tail can hold its own header AND a useful 128-byte payload. The guard also
+                // prevents the `node.size - want - HEADER` underflow when an exactly-sized freed block is reused
+                // (with 128-byte alignment the engine frees and re-requests the same size constantly).
+                if node.size >= want + HEADER {
+                    let remainder = node.size - want - HEADER;
+                    if remainder >= 128 {
+                        // SAFETY: `remainder` bytes were verified to be inside this block.
+                        let split = unsafe { (cursor.cast::<u8>().add(HEADER + want)).cast::<Header>() };
+                        unsafe {
+                            ptr::write(split, Header { magic: FREE, size: remainder, next: node.next, _pad: [0; 104] });
+                        }
+                        node.size = want;
+                        node.next = split;
                     }
-                    node.size = want;
-                    node.next = split;
-                } else if remainder > 0 {
-                    // Too small to split: the allocation swallows the remainder, and its recorded size says so.
-                    node.size = want + remainder;
+                    // else: the tail is too small to be a block — the allocation keeps the whole block's size.
                 }
                 unsafe { core::ptr::write_volatile(core::ptr::addr_of_mut!((*cursor).magic), USED) };
                 unsafe { (*st).used += 1 };
