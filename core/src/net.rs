@@ -43,7 +43,10 @@ pub fn start_queue(dev: &Device) -> Result<(), &'static str> {
         // THE SELECTOR FIRST. Legacy virtio-mmio addresses every queue through QueueSel, and a queue operation against
         // an unselected queue is undefined — measured: the queue number read back as 0, which is what "no queue
         // selected" looks like from the driver's side.
-        wr(dev.base, 0x030, 0); // QueueSel = 0, the receive queue
+        // QUEUE 1 IS TRANSMIT. virtio-net has two queues and queue 0 is RECEIVE — measured: a perfectly formed ring with
+        // descriptor, length, flags and available index all correct, offered to queue 0, is never completed, because a
+        // receive queue is not where a frame goes out. The ring was right all along; the queue was wrong.
+        wr(dev.base, 0x030, 1); // QueueSel = 1, the transmit queue
         let max = (rd(dev.base, 0x034) as u16).min(8);
         if max == 0 {
             return Err("the device offers no queue");
@@ -101,7 +104,7 @@ pub fn transmit(dev: &Device, frame: &[u8]) -> Result<u32, &'static str> {
         core::ptr::write_volatile((avail as *mut u16).add(1), 1); // one descriptor offered
         core::ptr::write_volatile((avail as *mut u16).add(2), 0);
         // Kick the queue.
-        wr(dev.base, 0x050, 0);
+        wr(dev.base, 0x050, 1); // kick the transmit queue
 
         // Poll the used ring for the completion. Bounded: a device that never answers must not hang the boot.
         let used = rings.add(USED_OFF);
