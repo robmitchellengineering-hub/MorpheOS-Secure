@@ -19,6 +19,8 @@ ELF="$WORK/target/aarch64-unknown-none/release/morph-core"
 LOG="$WORK/serial.log"; mkdir -p "$WORK"; rm -f "$LOG"
 # a 64 MiB disk for the block device; created once so the drive exists to be read
 truncate -s 64M "$WORK/disk.img" 2>/dev/null || dd if=/dev/zero of="$WORK/disk.img" bs=1M count=64 2>/dev/null
+# a known signature at sector 0, so the Core's read round-trips something it did not write
+printf 'MORPHEOS' | dd of="$WORK/disk.img" bs=1 count=8 conv=notrunc 2>/dev/null
 # THE IMAGE PATH: a bare ELF gets no device tree in x0 (measured: x0 == 0), so this gate converts the same binary to an
 # arm64 Image and boots THAT. The header is in the source; objcopy makes the flat image the firmware protocol expects.
 IMG="$WORK/morph-core.img"
