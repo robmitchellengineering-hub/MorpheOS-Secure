@@ -123,3 +123,42 @@ frame goes out. Six measurements have been made; the seventh should be a known-g
 ### What is deliberately not in this driver yet
 No receive path, no protocol stack, no checksums, no retries. The milestone is one frame the host's pcap contains —
 nothing above it is worth writing until that is true.
+
+## STATE, 2026-11-05 — the Core speaks ARP, IP/ICMP, UDP and RTP
+
+Rungs 1–3 of the IP chunk are merged and measured (`main`, 18 gates green):
+
+```
+ok: an ICMP echo reply the Core computed, with correct IP and ICMP checksums, reached the wire
+ok: a UDP datagram the Core computed, with a correct checksum, reached the wire
+ok: the Core parsed an inbound UDP datagram — ports and length read back
+ok: an RTP stream the Core emitted — sequence 0..7, timestamp step 48 — reached the wire
+```
+
+The gate recomputes every checksum off the capture, and `--self-test` applies `ip-mutant-bad-checksum`,
+`udp-mutant-bad-checksum` and `rtp-mutant-frozen-seq` to prove each check can fail. The RTP payload is a placeholder
+ramp — the DSP path and plugins are deferred by Rob.
+
+### The honest caveat, and where rung 4 stands
+The inbound trigger is still synthesized: slirp answers our questions but cannot send one. Rung 4 was to retire that
+with a real peer. Measured on 2026-11-05, the peer candidates have a hard constraint:
+
+| host | wired? | what a real-peer test needs |
+|---|---|---|
+| pacland-rog (GL752VW) | **no** — wifi (`wlp2s0`) + tailscale only | macvtap over wifi is unreliable (AP isolation); not a tap host |
+| studio-linux2 | VM, NAT behind the laptop | same: no dedicated wire |
+
+So a true two-machine wire test needs either a **wired host** or the Pi itself. What IS feasible today without new
+hardware is **UDP real inbound via `hostfwd`**: QEMU `-netdev user,hostfwd=udp:127.0.0.1:9999-10.0.2.15:9999`, and a
+host-side `nc -u` datagram that arrives through the receive ring. That retires the synthetic-trigger caveat for UDP —
+but not for ICMP, which hostfwd cannot forward. Genuine ping therefore waits on rung 5 (the Pi) or a wired host.
+
+### What was learned, recorded so the next session does not re-learn it
+- The available index **must grow** per transmit; a constant `avail.idx = 1` makes the device see no new work and drop
+  every later frame silently.
+- A reply addressed to a MAC slirp does not route is **composed, transmitted, completed and dropped** — reply to the
+  sender's actual MAC.
+- A falsifier must act where the gate reads: `rtp-mutant-frozen-seq` in the parser left the wire untouched, and only
+  the self-test caught it.
+- The squash-duplication transplant (`git diff origin/main..<branch> | git apply -3` onto a fresh branch) is the
+  reliable way to land stacked network branches, after two rebases failed on the same conflict.
