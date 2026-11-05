@@ -17,6 +17,8 @@ echo "== building the Core (FDT)${FEATURES:+ $FEATURES}"
 cargo build -q -p morph-core --target aarch64-unknown-none --release $FEATURES || { echo "FAIL: the Core did not build" >&2; exit 1; }
 ELF="$WORK/target/aarch64-unknown-none/release/morph-core"
 LOG="$WORK/serial.log"; mkdir -p "$WORK"; rm -f "$LOG"
+# a 64 MiB disk for the block device; created once so the drive exists to be read
+truncate -s 64M "$WORK/disk.img" 2>/dev/null || dd if=/dev/zero of="$WORK/disk.img" bs=1M count=64 2>/dev/null
 # THE IMAGE PATH: a bare ELF gets no device tree in x0 (measured: x0 == 0), so this gate converts the same binary to an
 # arm64 Image and boots THAT. The header is in the source; objcopy makes the flat image the firmware protocol expects.
 IMG="$WORK/morph-core.img"
@@ -61,7 +63,9 @@ PATCH
 
 timeout "${FDT_TIMEOUT:-25}" qemu-system-aarch64 -M virt -cpu cortex-a76 -m 256M \
     -kernel "$IMG" -nographic -monitor none -serial stdio \
-    -netdev user,id=n0 -device virtio-net-device,netdev=n0 -global virtio-mmio.force-legacy=false \
+    -netdev user,id=n0 -device virtio-net-device,netdev=n0 \
+    -device virtio-blk-device,drive=d0 -drive file="$WORK/disk.img",if=none,id=d0,format=raw \
+    -global virtio-mmio.force-legacy=false \
     -object filter-dump,id=f0,netdev=n0,file="$WORK/net.pcap" > "$LOG" 2>&1
 echo "== what the Core wrote (FDT lines)"
 sed -e 's/\r$//' "$LOG" | grep -E "^FDT:" | head -5
