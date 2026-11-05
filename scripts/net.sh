@@ -16,14 +16,15 @@ WORK=${NET_WORK:-target/net}
 case "$MODE" in --self-test) WORK="$WORK/selftest" ;; *) WORK="$WORK/check" ;; esac
 case "$MODE" in check|--self-test) ;; *) echo "usage: net.sh [--self-test]" >&2; exit 2 ;; esac
 FEATURES=""
-if [ "$MODE" = "--self-test" ]; then FEATURES="--features ip-mutant-bad-checksum,udp-mutant-bad-checksum,rtp-mutant-frozen-seq,rtp-mutant-wrong-ssrc"; fi
+PROG_FEATURES=""
+if [ "$MODE" = "--self-test" ]; then FEATURES="--features ip-mutant-bad-checksum,udp-mutant-bad-checksum,rtp-mutant-frozen-seq,rtp-mutant-wrong-ssrc"; PROG_FEATURES="--features rtp-mutant-wrong-ssrc"; fi
 command -v cargo >/dev/null 2>&1 || { echo "REFUSED: no cargo here" >&2; exit 2; }
 command -v qemu-system-aarch64 >/dev/null 2>&1 || { echo "REFUSED: no qemu-system-aarch64 here" >&2; exit 2; }
 export CARGO_TARGET_DIR="$WORK/target"
 echo "== building the Core (net)"
 # shellcheck disable=SC2086
 cargo build -q -p morph-core --target aarch64-unknown-none --release $FEATURES || { echo "FAIL: the Core did not build" >&2; exit 1; }
-cargo build -q -p morph-program --target aarch64-unknown-none --release || { echo "FAIL: the program did not build" >&2; exit 1; }
+cargo build -q -p morph-program --target aarch64-unknown-none --release $PROG_FEATURES || { echo "FAIL: the program did not build" >&2; exit 1; }
 ELF="$WORK/target/aarch64-unknown-none/release/morph-core"
 IMG="$WORK/morph-core.img"; PCAP="$WORK/net.pcap"
 mkdir -p "$WORK"; rm -f "$IMG" "$PCAP"

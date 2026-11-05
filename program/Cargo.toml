@@ -13,5 +13,11 @@ path = "src/main.rs"
 # AMT/ROB-shaped RTP header with the engine's own wire-format code.
 rob-core = { path = "../crates/rob-core" }
 
+[features]
+# The net gate's --self-test mutation: the program emits a wrong SSRC, so the
+# gate's engine-RTP check (SSRC 0xC0FFEE00) must go red. The engine packet is
+# built here, not by the Core, so its mutation must be here too.
+rtp-mutant-wrong-ssrc = []
+
 [profile.release]
 panic = "abort"

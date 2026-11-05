@@ -41,7 +41,14 @@ pub extern "C" fn _start() -> u64 {
             payload_type: 96,
             sequence: 100,
             timestamp: 4800,
-            ssrc: 0xC0FF_EE00,
+            // The mutation makes the stream unattributable, exactly the defect
+            // the gate's engine-RTP check must catch (the same way the Core's
+            // demo RTP has rtp-mutant-wrong-ssrc).
+            ssrc: if cfg!(feature = "rtp-mutant-wrong-ssrc") {
+                0
+            } else {
+                0xC0FF_EE00
+            },
         };
         let core = RobCore {
             version: ROB_VERSION,
