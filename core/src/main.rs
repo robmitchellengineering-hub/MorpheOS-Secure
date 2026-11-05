@@ -1132,7 +1132,7 @@ pub extern "C" fn svc_handler(frame: *mut u64) {
                     ALLOCATOR.init();
                 }
                 let size = arg0 as usize;
-                if size == 0 || size > 256 * 1024 {
+                if size == 0 || size > 640 * 1024 {
                     uart.write_line("SVC: alloc refused — the size is not a request");
                     0
                 } else {
