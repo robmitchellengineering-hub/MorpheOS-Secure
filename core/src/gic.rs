@@ -70,6 +70,7 @@ pub fn init() {
         asm!("msr icc_sre_el1, {0}", in(reg) sre | 1, options(nostack));
         asm!("isb", options(nostack));
         asm!("msr icc_pmr_el1, {0}", in(reg) 0xffu64, options(nostack));
+        asm!("msr icc_igrpen0_el1, {0}", in(reg) 1u64, options(nostack));
         asm!("msr icc_igrpen1_el1, {0}", in(reg) 1u64, options(nostack));
         write(GICR_WAKER, 0);
         write(GICR_CTLR, 3); // EnableGrp0 | EnableGrp1 — the redistributor must enable group 1 for the PPI
