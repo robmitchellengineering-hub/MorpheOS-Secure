@@ -564,7 +564,7 @@ fn fdt_demo(uart: &Uart) {
                                                             match net::transmit(&dev, &reply[..reply_len]) {
                                                                 Ok(_) => {
                                                                     let mut l = uart::LineBuf::new();
-                                                                    l.push_str("NET: ARP REPLY sent — 10.0.2.15 is at our MAC, to ");
+                                                                    l.push_str("NET: ARP REPLY sent — our address is at our MAC, to ");
                                                                     for (i, b) in req[6..12].iter().enumerate() {
                                                                         if i > 0 {
                                                                             l.push_str(":");

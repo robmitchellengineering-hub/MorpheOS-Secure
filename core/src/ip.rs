@@ -8,7 +8,16 @@
 //! so the echo request is synthesized from the gateway's real MAC (the same pattern as the ARP reply: the logic and
 //! the delivery are real, the trigger is synthetic until a real peer exists, which is rung 4).
 
+// The Core's address is CONFIGURATION, not a memory. Default is QEMU slirp's subnet (10.0.2.15 / gateway 10.0.2.2);
+// a real LAN selects its own via a feature, so the same image answers ARP and ping for a real address on a real wire.
+#[cfg(feature = "net-lan-19216815")]
+pub const OUR_IP: [u8; 4] = [192, 168, 15, 42];
+#[cfg(not(feature = "net-lan-19216815"))]
 pub const OUR_IP: [u8; 4] = [10, 0, 2, 15];
+
+#[cfg(feature = "net-lan-19216815")]
+pub const GATEWAY_IP: [u8; 4] = [192, 168, 15, 1];
+#[cfg(not(feature = "net-lan-19216815"))]
 pub const GATEWAY_IP: [u8; 4] = [10, 0, 2, 2];
 
 /// The length of the echo payload. Fixed so the packet size is known and the checksum has a real subject. Eight bytes
