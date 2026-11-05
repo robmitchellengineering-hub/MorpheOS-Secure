@@ -18,6 +18,9 @@ rob-core = { path = "../crates/rob-core" }
 # gate's engine-RTP check (SSRC 0xC0FFEE00) must go red. The engine packet is
 # built here, not by the Core, so its mutation must be here too.
 rtp-mutant-wrong-ssrc = []
+# The self-check mutation: report one fewer test passed than actually did, so
+# the gate's "6/6 RTP self-checks passed" check must go red.
+selfcheck-mutant-wrong-count = []
 
 [profile.release]
 panic = "abort"

@@ -4,7 +4,10 @@
 use core::arch::asm;
 use core::panic::PanicInfo;
 
-use rob_core::rtp::{self, RobCore, RtpHeader, MODE_BIT_EXACT, ROB_VERSION};
+use rob_core::rtp::{
+    self, RobCore, RtpHeader, DEFAULT_ROB_EXT_ID, MODE_BIT_EXACT, MODE_REDUNDANCY, MODE_TEST,
+    ROB_VERSION,
+};
 
 #[panic_handler]
 fn panic(_: &PanicInfo) -> ! {
@@ -17,10 +20,143 @@ fn panic(_: &PanicInfo) -> ! {
 /// the plugins are deferred by Rob). 48 bytes = 16 mono 24-bit samples at 1 ms.
 const PAYLOAD_BYTES: usize = 48;
 
+// ---------------------------------------------------------------------------
+// The six RTP tests rob-core runs in `cargo test`, ported as no_std self-checks.
+// They call the real `rtp::write_header` and `rtp::parse` — the same code the
+// engine uses — so a pass here means the wire format round-trips on the Core.
+// ---------------------------------------------------------------------------
+
+fn sample() -> (RtpHeader, RobCore) {
+    (
+        RtpHeader {
+            marker: true,
+            payload_type: 97,
+            sequence: 0xFFFE,
+            timestamp: 0xDEAD_BEEF,
+            ssrc: 0x1234_5678,
+        },
+        RobCore {
+            version: ROB_VERSION,
+            mode: MODE_REDUNDANCY | MODE_TEST,
+            path_id: 3,
+            slot: 0xABC,
+            budget_us: 7_500,
+            send_time_us: 0x0102_0304,
+        },
+    )
+}
+
+fn check_header_with_extension_round_trips() -> bool {
+    let (h, c) = sample();
+    let mut buf = [0u8; 64];
+    let Ok(n) = rtp::write_header(&mut buf, &h, Some((DEFAULT_ROB_EXT_ID, &c))) else {
+        return false;
+    };
+    if n != 28 {
+        return false; // spec: RTP + rob-core = 28 bytes
+    }
+    buf[n..n + 4].copy_from_slice(b"DATA");
+    let Ok(p) = rtp::parse(&buf[..n + 4], DEFAULT_ROB_EXT_ID) else {
+        return false;
+    };
+    p.header == h && p.amt == Some(c) && p.payload == b"DATA"
+}
+
+fn check_plain_rtp_has_no_rob_fields() -> bool {
+    let (h, _) = sample();
+    let mut buf = [0u8; 16];
+    let Ok(n) = rtp::write_header(&mut buf, &h, None) else {
+        return false;
+    };
+    if n != 12 {
+        return false;
+    }
+    let Ok(p) = rtp::parse(&buf[..n], DEFAULT_ROB_EXT_ID) else {
+        return false;
+    };
+    p.amt.is_none() && p.payload.is_empty()
+}
+
+fn check_other_extension_ids_are_skipped() -> bool {
+    let (h, c) = sample();
+    let mut buf = [0u8; 64];
+    let Ok(n) = rtp::write_header(&mut buf, &h, Some((5, &c))) else {
+        return false;
+    };
+    // element 5 is not rob-core when we asked for id 1
+    let Ok(p) = rtp::parse(&buf[..n], DEFAULT_ROB_EXT_ID) else {
+        return false;
+    };
+    p.amt.is_none()
+}
+
+fn check_rejects_out_of_range_fields() -> bool {
+    let (h, mut c) = sample();
+    c.slot = 0x1000;
+    let mut buf = [0u8; 64];
+    matches!(
+        rtp::write_header(&mut buf, &h, Some((1, &c))),
+        Err(rob_core::Error::FieldRange)
+    )
+}
+
+fn check_rejects_truncated_and_wrong_version() -> bool {
+    if !matches!(rtp::parse(&[0x80; 5], 1), Err(rob_core::Error::TooShort)) {
+        return false;
+    }
+    let mut buf = [0u8; 12];
+    buf[0] = 0x40; // version 1
+    matches!(rtp::parse(&buf, 1), Err(rob_core::Error::BadVersion))
+}
+
+fn check_rtp_padding_is_removed() -> bool {
+    let (h, _) = sample();
+    let mut buf = [0u8; 20];
+    let Ok(n) = rtp::write_header(&mut buf, &h, None) else {
+        return false;
+    };
+    buf[0] |= 0x20; // padding bit
+    buf[n..n + 2].copy_from_slice(b"AB");
+    buf[n + 2..n + 4].copy_from_slice(&[0, 2]); // 2 bytes of padding
+    let Ok(p) = rtp::parse(&buf[..n + 4], 1) else {
+        return false;
+    };
+    p.payload == b"AB"
+}
+
+fn run_self_checks() -> usize {
+    let mut passed = 0;
+    if check_header_with_extension_round_trips() {
+        passed += 1;
+    }
+    if check_plain_rtp_has_no_rob_fields() {
+        passed += 1;
+    }
+    if check_other_extension_ids_are_skipped() {
+        passed += 1;
+    }
+    if check_rejects_out_of_range_fields() {
+        passed += 1;
+    }
+    if check_rejects_truncated_and_wrong_version() {
+        passed += 1;
+    }
+    if check_rtp_padding_is_removed() {
+        passed += 1;
+    }
+    if cfg!(feature = "selfcheck-mutant-wrong-count") {
+        // The mutation: report one fewer than actually passed, so the gate's
+        // "6/6" check must go red.
+        passed.saturating_sub(1)
+    } else {
+        passed
+    }
+}
+
 /// The entry the loader calls. It makes the four syscalls a loadable program is
-/// allowed to make, then sends its OWN RTP packet — the AMT/ROB-shaped header
-/// (V=2, X=1, the 0xBEDE `rob-core` extension) built with rob-core's
-/// `rtp::write_header` — and returns 66.
+/// allowed to make, runs rob-core's six RTP tests as no_std self-checks, puts
+/// the pass count in the RTP payload, sends its own AMT/ROB-shaped RTP packet
+/// (built with `rtp::write_header`), and returns 66.
 #[unsafe(no_mangle)]
 pub extern "C" fn _start() -> u64 {
     unsafe {
@@ -34,7 +170,9 @@ pub extern "C" fn _start() -> u64 {
         asm!("svc #0", inout("x0") 3u64 => _, options(nostack));
 
         // send_rtp (4): the engine's own RTP packet, built here and handed to
-        // the Core to transmit. x1 = pointer, x2 = length.
+        // the Core to transmit. x1 = pointer, x2 = length. The payload's first
+        // three bytes carry the self-check result ("SC" + pass count) so the
+        // gate reads the tests' verdict off the CAPTURE, not the console.
         let mut packet = [0u8; 12 + 16 + PAYLOAD_BYTES];
         let header = RtpHeader {
             marker: false,
@@ -63,9 +201,10 @@ pub extern "C" fn _start() -> u64 {
             Ok(n) => n,
             Err(_) => return u64::MAX,
         };
-        for (i, b) in packet[hlen..].iter_mut().enumerate() {
-            *b = i as u8; // a ramp keyed to the payload position, so the wire shows the packet is ours
-        }
+        let passed = run_self_checks();
+        packet[hlen] = 0x53; // 'S'
+        packet[hlen + 1] = 0x43; // 'C'
+        packet[hlen + 2] = passed as u8;
         let len = hlen + PAYLOAD_BYTES;
         let ptr = packet.as_ptr() as u64;
         asm!(

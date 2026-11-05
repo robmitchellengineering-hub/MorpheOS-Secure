@@ -17,7 +17,7 @@ case "$MODE" in --self-test) WORK="$WORK/selftest" ;; *) WORK="$WORK/check" ;; e
 case "$MODE" in check|--self-test) ;; *) echo "usage: net.sh [--self-test]" >&2; exit 2 ;; esac
 FEATURES=""
 PROG_FEATURES=""
-if [ "$MODE" = "--self-test" ]; then FEATURES="--features ip-mutant-bad-checksum,udp-mutant-bad-checksum,rtp-mutant-frozen-seq,rtp-mutant-wrong-ssrc"; PROG_FEATURES="--features rtp-mutant-wrong-ssrc"; fi
+if [ "$MODE" = "--self-test" ]; then FEATURES="--features ip-mutant-bad-checksum,udp-mutant-bad-checksum,rtp-mutant-frozen-seq,rtp-mutant-wrong-ssrc"; PROG_FEATURES="--features rtp-mutant-wrong-ssrc,selfcheck-mutant-wrong-count"; fi
 command -v cargo >/dev/null 2>&1 || { echo "REFUSED: no cargo here" >&2; exit 2; }
 command -v qemu-system-aarch64 >/dev/null 2>&1 || { echo "REFUSED: no qemu-system-aarch64 here" >&2; exit 2; }
 export CARGO_TARGET_DIR="$WORK/target"
@@ -243,6 +243,29 @@ PYENG
 )
 ENGINE_RTP=${ENGINE_RTP:-0}
 
+# THE RTP SELF-CHECKS, READ OFF THE CAPTURE. The program runs rob-core's six
+# RTP tests on the Core and puts the pass count in its RTP payload ("SC" +
+# count). The gate reads that from the wire — not the console — so a program
+# that claims the tests passed but did not run them cannot fake it.
+SELFCHECK=$(python3 - "$PCAP" <<'PYSELF'
+import struct, sys
+d = open(sys.argv[1], 'rb').read()
+off, found = 24, 0
+while off + 16 <= len(d):
+    _, _, incl, _ = struct.unpack_from('<IIII', d, off); off += 16
+    f = d[off:off + incl]; off += incl
+    # Ethernet 14 + IPv4 20 + UDP 8 + RTP 12 + ext 16 = 70, then the payload's
+    # first three bytes: 0x53 'S', 0x43 'C', and the pass count (must be 6).
+    if len(f) >= 73 and f[12:14] == bytes([8, 0]) and f[23] == 17 \
+       and f[42] == 0x90 and f[50:54] == bytes([0xC0, 0xFF, 0xEE, 0x00]) \
+       and f[54:56] == bytes([0xBE, 0xDE]) \
+       and f[70:73] == bytes([0x53, 0x43, 6]):
+        found += 1
+print(found)
+PYSELF
+)
+SELFCHECK=${SELFCHECK:-0}
+
 # THE LOADED PROGRAM'S DATAGRAM. The API-surface rung sends a UDP datagram whose payload is MORPHEOS-SVC. It must be on
 # the wire with a CORRECT checksum — the same arithmetic the demo datagram proved, but carrying the loaded program's own
 # payload. This is the difference between 'a datagram left' and 'the loaded program's datagram left'.
@@ -281,10 +304,10 @@ PYSVC
 SVC_UDP=${SVC_UDP:-0}
 
 if [ "$MODE" = "--self-test" ]; then
-    if [ "$GOOD_ICMP" -ne 0 ] || [ "$GOOD_UDP" -ne 0 ] || [ "$SVC_UDP" -ne 0 ] || [ "$RTP_OK" -ne 0 ] || [ "$ENGINE_RTP" -ne 0 ]; then
-        echo "FAIL (self-test): a bad-checksum mutation still produced a valid datagram" >&2; exit 1
+    if [ "$GOOD_ICMP" -ne 0 ] || [ "$GOOD_UDP" -ne 0 ] || [ "$SVC_UDP" -ne 0 ] || [ "$RTP_OK" -ne 0 ] || [ "$ENGINE_RTP" -ne 0 ] || [ "$SELFCHECK" -ne 0 ]; then
+        echo "FAIL (self-test): a mutation still produced a valid datagram or self-check report" >&2; exit 1
     fi
-    echo "ok (self-test): with wrong checksums no valid reply or datagram is accepted — the check reads the arithmetic"
+    echo "ok (self-test): with the mutations no valid reply, datagram or self-check report is accepted — the checks read the wire"
     exit 0
 fi
 if [ "$GOOD_ICMP" -eq 0 ]; then
@@ -314,3 +337,8 @@ if [ "$ENGINE_RTP" -eq 0 ]; then
     echo "FAIL: the loaded program's RTP stream (SSRC 0xC0FFEE00) did not reach the wire" >&2; exit 1
 fi
 echo "ok: the loaded program's RTP stream reached the wire (SSRC 0xC0FFEE00)"
+
+if [ "$SELFCHECK" -eq 0 ]; then
+    echo "FAIL: the program's RTP payload did not report 6/6 self-checks passed" >&2; exit 1
+fi
+echo "ok: the program's RTP payload reports 6/6 RTP self-checks passed — read off the capture"
