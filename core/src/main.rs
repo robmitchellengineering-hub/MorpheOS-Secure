@@ -1008,6 +1008,11 @@ pub extern "C" fn svc_handler(frame: *mut u64) {
                     let mac = mac_unpack(OUR_MAC.load(core::sync::atomic::Ordering::Relaxed));
                     let gw = mac_unpack(GW_MAC.load(core::sync::atomic::Ordering::Relaxed));
                     let dev = net::Device { base, mac, queue_num: 0 };
+                    let mut lm = crate::uart::LineBuf::new(); lm.push_str("SVC: our mac ");
+                    for b in mac { let h = b"0123456789abcdef"; lm.push_byte(h[(b>>4) as usize]); lm.push_byte(h[(b&0xf) as usize]); lm.push_str(":"); }
+                    lm.push_str(" gw mac ");
+                    for b in gw { let h = b"0123456789abcdef"; lm.push_byte(h[(b>>4) as usize]); lm.push_byte(h[(b&0xf) as usize]); lm.push_str(":"); }
+                    lm.flush(&uart);
                     let (frame, len) = udp::datagram(mac, ip::OUR_IP, gw, ip::GATEWAY_IP, 9000, 9999, b"MORPHEOS-SVC");
                     match net::transmit(&dev, &frame[..len]) {
                         Ok(n) => {
