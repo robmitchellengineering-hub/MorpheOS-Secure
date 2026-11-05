@@ -26,6 +26,7 @@ cargo build -q -p morph-core --target aarch64-unknown-none --release $FEATURES |
 ELF="$WORK/target/aarch64-unknown-none/release/morph-core"
 IMG="$WORK/morph-core.img"; PCAP="$WORK/net.pcap"
 mkdir -p "$WORK"; rm -f "$IMG" "$PCAP"
+python3 scripts/make-disk.py "$WORK/disk.img"
 python3 - "$ELF" "$IMG" <<'PATCH'
 import struct, sys
 data = open(sys.argv[1], 'rb').read()
@@ -50,6 +51,7 @@ PATCH
 timeout "${NET_TIMEOUT:-40}" qemu-system-aarch64 -M virt -cpu cortex-a76 -m 256M \
     -kernel "$IMG" -nographic -monitor none -serial stdio \
     -netdev user,id=n0 -device virtio-net-device,netdev=n0 \
+    -device virtio-blk-device,drive=d0 -drive file="$WORK/disk.img",if=none,id=d0,format=raw \
     -global virtio-mmio.force-legacy=false \
     -object filter-dump,id=f0,netdev=n0,file="$PCAP" > "$WORK/serial.log" 2>&1
 
