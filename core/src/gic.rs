@@ -84,7 +84,7 @@ pub fn init() {
 
 /// Unmask IRQs on this CPU.
 pub fn unmask() {
-    unsafe { asm!("msr daifclr, #6", options(nostack)) }; // clear I (IRQ) and F (FIQ) — the timer PPI is a FIQ in GICv3
+    unsafe { asm!("msr daifclr, #3", options(nostack)) }; // clear F (FIQ) and I (IRQ) — the timer PPI is a FIQ in GICv3
 }
 
 /// Acknowledge, count, re-arm, end-of-interrupt.
