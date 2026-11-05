@@ -61,11 +61,6 @@ static ALLOC: CoreAlloc = CoreAlloc;
 
 #[panic_handler]
 fn panic(_: &PanicInfo) -> ! {
-    // Three reports = a panic happened here, distinguishable from the single
-    // progress markers.
-    for _ in 0..3 {
-        unsafe { asm!("svc #0", inout("x0") 0u64 => _, options(nostack)) };
-    }
     loop {
         unsafe { asm!("wfe", options(nomem, nostack)) };
     }
@@ -226,14 +221,6 @@ fn run_self_checks() -> usize {
 const MS: u64 = 1_000_000;
 const P: i64 = 96;
 
-/// A `report` syscall — the program's only way to say "I got this far" on the
-/// Core's serial line (used as a progress marker while wiring the engine).
-fn report() {
-    unsafe {
-        asm!("svc #0", inout("x0") 0u64 => _, options(nostack));
-    }
-}
-
 /// The mix engine's output flow SSRC — distinct from the self-check packet's
 /// 0xC0FFEE00, so the capture can attribute this RTP to the engine. The
 /// mutation makes the stream unattributable, exactly what the gate's engine
@@ -301,16 +288,13 @@ fn run_engine() -> usize {
         correction_records: 8,
         correction_span: 256,
     };
-    report(); // marker: EngineConfig built, about to allocate the engine
     let mut eng = Engine::new(cfg, mcfg);
-    report(); // marker: Engine::new returned
     {
         let m = eng.matrix();
         // Passthrough: input 0 -> output 0, input 1 -> output 1.
         let _ = m.connect(Node::Input(0), Node::Output(0), 0.0);
         let _ = m.connect(Node::Input(1), Node::Output(1), 0.0);
     }
-    report(); // marker: matrix routed
     let mut sender = Packetizer::new(fmt, 0xA, 97, 1);
     let mut pkt = [0u8; 1500];
     let mut pcm = [0i32; (P * 2) as usize];
@@ -335,7 +319,6 @@ fn run_engine() -> usize {
         });
         now += 2 * MS;
     }
-    report(); // marker: the mix loop finished
     emitted
 }
 
