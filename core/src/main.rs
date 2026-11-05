@@ -536,6 +536,23 @@ fn fdt_demo(uart: &Uart) {
                                             l.push_str(" bytes");
                                             l.flush(uart);
                                             uart.write_line("NET: an ARP request went out on the wire — the host's capture decides whether it arrived");
+                                            // THE DESCRIPTOR THAT ACTUALLY WENT. A failed transmit shows the ring we meant to write; this shows the one
+                                            // the device used. Measured: the captured frame began 10 bytes into our buffer, so the window is the evidence.
+                                            let (d_addr, d_len, d_flags, a_flags, a_idx, a_ring0, _) = net::ring_snapshot();
+                                            let mut l = uart::LineBuf::new();
+                                            l.push_str("NET: sent — descriptor addr ");
+                                            l.push_hex(d_addr);
+                                            l.push_str(", len ");
+                                            l.push_u64(d_len as u64);
+                                            l.push_str(", flags ");
+                                            l.push_u64(d_flags as u64);
+                                            l.push_str("; avail idx ");
+                                            l.push_u64(a_idx as u64);
+                                            l.push_str(", ring[0] ");
+                                            l.push_u64(a_ring0 as u64);
+                                            l.push_str(", flags ");
+                                            l.push_u64(a_flags as u64);
+                                            l.flush(&uart);
                                         }
                                         Err(e) => {
                                             uart.write_line(e);
