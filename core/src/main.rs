@@ -1013,7 +1013,7 @@ pub extern "C" fn svc_handler(frame: *mut u64) {
                     lm.push_str(" gw mac ");
                     for b in gw { let h = b"0123456789abcdef"; lm.push_byte(h[(b>>4) as usize]); lm.push_byte(h[(b&0xf) as usize]); lm.push_str(":"); }
                     lm.flush(&uart);
-                    let (frame, len) = udp::datagram(mac, ip::OUR_IP, gw, ip::GATEWAY_IP, 9000, 9999, b"MORPHEOS-SVC");
+                    let (frame, len) = udp::datagram(mac, ip::OUR_IP, gw, ip::GATEWAY_IP, 9000, 9999, b"MORPHEOS");
                     match net::transmit(&dev, &frame[..len]) {
                         Ok(n) => {
                             let mut l = crate::uart::LineBuf::new();
