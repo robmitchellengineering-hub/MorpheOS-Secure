@@ -65,6 +65,9 @@ static LOADED_CODE: [u32; 2] = [0xD280_0840, 0xD65F_03C0]; // mov x0,#0x42; ret 
 #[unsafe(link_section = ".text")]
 static mut LOAD_BUF: [u8; 8] = [0u8; 8];
 
+/// The ledger a loaded program writes through the syscall — the same machine the ledger rung proves, now reachable by call.
+static mut LEDGER: Option<Ledger> = None;
+
 /// The mutation returns 0 instead of 66, so the gate can fail when the loaded code is wrong.
 #[cfg(feature = "load-mutant-wrong-result")]
 #[unsafe(link_section = ".text")]
@@ -926,10 +929,41 @@ fn ab_demo(uart: &Uart) {
 pub extern "C" fn svc_handler(frame: *mut u64) {
     unsafe {
         let n = core::ptr::read_volatile(frame);
+        let arg0 = core::ptr::read_volatile(frame.add(1)); // x1: the syscall's first argument
+        let uart = crate::uart::Uart::at(crate::uart::UART_QEMU_VIRT);
         let result = match n {
             0 => {
-                crate::uart::Uart::at(crate::uart::UART_QEMU_VIRT).write_line("SVC: the loaded program asked the Core for service");
+                uart.write_line("SVC: the loaded program asked the Core for service");
                 0
+            }
+            1 => {
+                // apply_certified: a payload (x1) and a certificate the Core builds and CHECKS. The loaded program never
+                // supplies the certificate — it asks the Core to apply history, and the Core does the bounded check.
+                let cert = cert::Certificate {
+                    terms: [
+                        cert::Term { name: "engine", cost: 200, period: 1000 },
+                        cert::Term { name: "control", cost: 100, period: 1000 },
+                        cert::Term { name: "meter", cost: 50, period: 1000 },
+                    ],
+                    len: 3,
+                    claimed_ppm: 350_000,
+                };
+                if LEDGER.is_none() {
+                    LEDGER = Some(Ledger::empty());
+                }
+                match LEDGER.as_mut().unwrap().apply_certified(arg0, &cert) {
+                    Ok((id, _ppm)) => {
+                        let mut l = crate::uart::LineBuf::new();
+                        l.push_str("SVC: applied a certified generation ");
+                        l.push_u64(id as u64);
+                        l.flush(&uart);
+                        id as u64
+                    }
+                    Err(_) => {
+                        uart.write_line("SVC: the certificate was refused");
+                        u64::MAX
+                    }
+                }
             }
             _ => u64::MAX, // unknown syscall: the caller sees an error, not a guess
         };
