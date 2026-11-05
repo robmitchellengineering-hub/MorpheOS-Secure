@@ -18,78 +18,7 @@ cargo build -q -p morph-core --target aarch64-unknown-none --release $FEATURES |
 ELF="$WORK/target/aarch64-unknown-none/release/morph-core"
 LOG="$WORK/serial.log"; mkdir -p "$WORK"; rm -f "$LOG"
 # a 64 MiB disk for the block device; created once so the drive exists to be read
-truncate -s 64M "$WORK/disk.img" 2>/dev/null || dd if=/dev/zero of="$WORK/disk.img" bs=1M count=64 2>/dev/null
-# a known signature at sector 0, so the Core's read round-trips something it did not write
-printf 'MORPHEOS' | dd of="$WORK/disk.img" bs=1 count=8 conv=notrunc 2>/dev/null
-# mov x0,#0x42; ret, into sector 2 so the loader can read foreign code off the medium
-printf '\x40\x08\x80\xd2\xc0\x03\x5f\xd6' | dd of="$WORK/disk.img" bs=1 seek=1024 conv=notrunc 2>/dev/null
-# a minimal ELF64 AArch64 header into sector 3: magic, class 2, LE, e_machine 183, e_entry 0x40081000
-python3 - "$WORK/disk.img" <<'PYELF
-# a full minimal ELF64 into sector 4: header + one PT_LOAD program header + the 8 code bytes (mov x0,#0x42; ret)
-python3 - "$WORK/disk.img" <<'ELFLOAD'
-import struct, sys
-e = bytearray(128)
-e[0:4] = b'\x7fELF'; e[4] = 2; e[5] = 1; e[6] = 1
-struct.pack_into('<H', e, 0x10, 2)    # ET_EXEC
-struct.pack_into('<H', e, 0x12, 183)  # EM_AARCH64
-struct.pack_into('<I', e, 0x14, 1)
-struct.pack_into('<Q', e, 0x18, 0x40090000) # e_entry
-struct.pack_into('<Q', e, 0x20, 64)   # e_phoff
-struct.pack_into('<H', e, 0x36, 56)   # e_phentsize
-struct.pack_into('<H', e, 0x38, 1)    # e_phnum
-struct.pack_into('<H', e, 0x34, 64)   # e_ehsize
-# program header at 64
-struct.pack_into('<I', e, 64, 1)      # p_type = PT_LOAD
-struct.pack_into('<I', e, 68, 5)      # p_flags = R|X
-struct.pack_into('<Q', e, 72, 120)    # p_offset
-struct.pack_into('<Q', e, 80, 0x40090000) # p_vaddr
-struct.pack_into('<Q', e, 88, 0x40090000) # p_paddr
-struct.pack_into('<Q', e, 96, 8)      # p_filesz
-struct.pack_into('<Q', e, 104, 8)     # p_memsz
-struct.pack_into('<Q', e, 112, 0x1000)# p_align
-e[120:128] = bytes([0x40,0x08,0x80,0xd2,0xc0,0x03,0x5f,0xd6]) # mov x0,#0x42; ret
-d = bytearray(open(sys.argv[1], 'rb').read())
-d[2048:2048+128] = e
-open(sys.argv[1], 'wb').write(bytes(d))
-ELFLOAD'
-import struct, sys
-h = bytearray(64)
-h[0:4] = b'\x7fELF'; h[4] = 2; h[5] = 1; h[6] = 1
-struct.pack_into('<H', h, 0x10, 2)   # ET_EXEC
-struct.pack_into('<H', h, 0x12, 183) # EM_AARCH64
-struct.pack_into('<I', h, 0x14, 1)
-struct.pack_into('<Q', h, 0x18, 0x40081000) # e_entry
-d = bytearray(open(sys.argv[1], 'rb').read())
-d[1536:1536+64] = h
-open(sys.argv[1], 'wb').write(bytes(d))
-PYELF
-# a full minimal ELF64 into sector 4: header + one PT_LOAD program header + the 8 code bytes (mov x0,#0x42; ret)
-python3 - "$WORK/disk.img" <<'ELFLOAD'
-import struct, sys
-e = bytearray(128)
-e[0:4] = b'\x7fELF'; e[4] = 2; e[5] = 1; e[6] = 1
-struct.pack_into('<H', e, 0x10, 2)    # ET_EXEC
-struct.pack_into('<H', e, 0x12, 183)  # EM_AARCH64
-struct.pack_into('<I', e, 0x14, 1)
-struct.pack_into('<Q', e, 0x18, 0x40090000) # e_entry
-struct.pack_into('<Q', e, 0x20, 64)   # e_phoff
-struct.pack_into('<H', e, 0x36, 56)   # e_phentsize
-struct.pack_into('<H', e, 0x38, 1)    # e_phnum
-struct.pack_into('<H', e, 0x34, 64)   # e_ehsize
-# program header at 64
-struct.pack_into('<I', e, 64, 1)      # p_type = PT_LOAD
-struct.pack_into('<I', e, 68, 5)      # p_flags = R|X
-struct.pack_into('<Q', e, 72, 120)    # p_offset
-struct.pack_into('<Q', e, 80, 0x40090000) # p_vaddr
-struct.pack_into('<Q', e, 88, 0x40090000) # p_paddr
-struct.pack_into('<Q', e, 96, 8)      # p_filesz
-struct.pack_into('<Q', e, 104, 8)     # p_memsz
-struct.pack_into('<Q', e, 112, 0x1000)# p_align
-e[120:128] = bytes([0x40,0x08,0x80,0xd2,0xc0,0x03,0x5f,0xd6]) # mov x0,#0x42; ret
-d = bytearray(open(sys.argv[1], 'rb').read())
-d[2048:2048+128] = e
-open(sys.argv[1], 'wb').write(bytes(d))
-ELFLOAD
+python3 scripts/make-disk.py "$WORK/disk.img"
 # THE IMAGE PATH: a bare ELF gets no device tree in x0 (measured: x0 == 0), so this gate converts the same binary to an
 # arm64 Image and boots THAT. The header is in the source; objcopy makes the flat image the firmware protocol expects.
 IMG="$WORK/morph-core.img"
