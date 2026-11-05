@@ -1069,14 +1069,14 @@ pub extern "C" fn svc_handler(frame: *mut u64) {
                 } else {
                     let ptr = arg0 as *const u8;
                     let len = arg1 as usize;
-                    // A UDP datagram's payload ceiling is the 256-byte transmit buffer minus the 42 bytes of Ethernet,
-                    // IPv4 and UDP header. Anything past that is not a packet, it is a fault waiting to read past the
-                    // program's data.
-                    if len == 0 || len > 214 {
+                    // The UDP payload ceiling is the 1536-byte transmit buffer minus the 42 bytes of Ethernet, IPv4 and
+                    // UDP header — room for the engine's real RTP packets (609 bytes with the plain duplicate, 1245
+                    // with the layered protection).
+                    if len == 0 || len > 1494 {
                         uart.write_line("SVC: send_rtp refused — the RTP length is not a packet");
                         u64::MAX
                     } else {
-                        let mut rtp_bytes = [0u8; 214];
+                        let mut rtp_bytes = [0u8; 1494];
                         for i in 0..len {
                             rtp_bytes[i] = core::ptr::read_volatile(ptr.add(i));
                         }
