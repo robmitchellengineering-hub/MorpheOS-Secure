@@ -24,3 +24,36 @@ pub fn parse_header(header: &[u8; 64]) -> Option<(u16, u64)> {
     ]);
     Some((machine, entry))
 }
+
+/// Parse the program headers, copy the PT_LOAD segment into its load address, and return the entry point. This is the
+/// difference between "the header is real" and "the program's code is in memory": the bytes the ELF carries are placed
+/// where the ELF says they belong, and only then is the entry point returned.
+pub fn load(buf: &[u8; 512]) -> Option<u64> {
+    let mut header = [0u8; 64];
+    header.copy_from_slice(&buf[..64]);
+    let (_, entry) = parse_header(&header)?;
+    let phoff = u64::from_le_bytes(buf[0x20..0x28].try_into().ok()?) as usize;
+    let phentsize = u16::from_le_bytes(buf[0x36..0x38].try_into().ok()?) as usize;
+    let phnum = u16::from_le_bytes(buf[0x38..0x3a].try_into().ok()?) as usize;
+    for i in 0..phnum {
+        let ph = phoff + i * phentsize;
+        if ph + 40 > 512 {
+            return None;
+        }
+        let p_type = u32::from_le_bytes(buf[ph..ph + 4].try_into().ok()?);
+        if p_type == 1 {
+            // PT_LOAD: place the file bytes at p_vaddr.
+            let p_offset = u64::from_le_bytes(buf[ph + 8..ph + 16].try_into().ok()?) as usize;
+            let p_vaddr = u64::from_le_bytes(buf[ph + 16..ph + 24].try_into().ok()?) as usize;
+            let p_filesz = u64::from_le_bytes(buf[ph + 32..ph + 40].try_into().ok()?) as usize;
+            // SAFETY: the segment is placed at the address the ELF declares, inside this Core's RAM.
+            for j in 0..p_filesz {
+                unsafe {
+                    core::ptr::write_volatile((p_vaddr + j) as *mut u8, buf[p_offset + j]);
+                }
+            }
+            return Some(entry);
+        }
+    }
+    None
+}

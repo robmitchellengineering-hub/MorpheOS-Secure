@@ -535,6 +535,24 @@ fn fdt_demo(uart: &Uart) {
                                         }
                                         _ => uart.write_line("BLK: the write returned a non-zero status"),
                                     }
+                                        // ELF LOAD. Read the ELF off the disk, place its PT_LOAD segment at the declared address, and call the entry.
+                                        // The result (66) can only appear if a COMPILED program was placed in memory and executed.
+                                        let mut elfbuf = [0u8; 512];
+                                        if let Ok(0) = blk::read_sector(&blk, 4, &mut elfbuf) {
+                                            match elf::load(&elfbuf) {
+                                                Some(entry) => {
+                                                    let loaded: unsafe extern "C" fn() -> u64 = unsafe { core::mem::transmute(entry as *const ()) };
+                                                    let r = unsafe { loaded() };
+                                                    let mut l = uart::LineBuf::new();
+                                                    l.push_str("ELF: loaded a compiled program, entry ");
+                                                    l.push_hex(entry);
+                                                    l.push_str(", it returned ");
+                                                    l.push_u64(r);
+                                                    l.flush(&uart);
+                                                }
+                                                None => uart.write_line("ELF: the program could not be loaded"),
+                                            }
+                                        }
                                         // ELF, FIRST FACT. The gate wrote a minimal ELF64 header to sector 3; the Core reads it and verifies magic,
                                         // class and machine before it believes the entry point.
                                         let mut hdr = [0u8; 512];
