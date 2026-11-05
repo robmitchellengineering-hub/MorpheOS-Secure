@@ -537,7 +537,29 @@ fn fdt_demo(uart: &Uart) {
                                             l.flush(uart);
                                             uart.write_line("NET: an ARP request went out on the wire — the host's capture decides whether it arrived");
                                         }
-                                        Err(e) => uart.write_line(e),
+                                        Err(e) => {
+                                            uart.write_line(e);
+                                            // WHAT DOES THE DEVICE THINK? A queue the device refused and a queue it never
+                                            // read look identical from the outside - both are a timeout. The status
+                                            // register tells them apart: bit 6 is DEVICE_NEEDS_RESET, and the PFN
+                                            // readback says whether our page frame landed at all.
+                                            // SAFETY: inside the window the firmware described.
+                                            let (status, pfn, qnum) = unsafe {
+                                                (
+                                                    core::ptr::read_volatile((w + 0x070) as *const u32),
+                                                    core::ptr::read_volatile((w + 0x040) as *const u32),
+                                                    core::ptr::read_volatile((w + 0x038) as *const u32),
+                                                )
+                                            };
+                                            let mut l = uart::LineBuf::new();
+                                            l.push_str("NET: after the kick — status 0x");
+                                            l.push_hex(status as u64);
+                                            l.push_str(", QueuePFN 0x");
+                                            l.push_hex(pfn as u64);
+                                            l.push_str(", QueueNum ");
+                                            l.push_u64(qnum as u64);
+                                            l.flush(&uart);
+                                        }
                                     }
                                 }
                                 Err(e) => uart.write_line(e),
