@@ -621,6 +621,16 @@ fn fdt_demo(uart: &Uart) {
                                                                             for _ping in 0..12 {
                                                                                 match net::poll_frame(&dev, 250_000_000) {
                                                                                     Some((frame, flen)) => {
+                                                                            let is_arp = frame[12] == 0x08 && frame[13] == 0x06;
+                                                                            let asks_for_us = is_arp && flen >= 42 && frame[20] == 0x00 && frame[21] == 0x01
+                                                                                && frame[38] == ip::OUR_IP[0] && frame[39] == ip::OUR_IP[1]
+                                                                                && frame[40] == ip::OUR_IP[2] && frame[41] == ip::OUR_IP[3];
+                                                                            if asks_for_us {
+                                                                                let (reply, rlen) = net::arp_reply(&frame[..flen], mac);
+                                                                                if net::transmit(&dev, &reply[..rlen]).is_ok() {
+                                                                                    uart.write_line("NET: answered a REAL ARP request for our address");
+                                                                                }
+                                                                            }
                                                                                         let is_ip = frame[12] == 0x08 && frame[13] == 0x00;
                                                                                         let is_icmp_echo = is_ip && flen >= 42 && frame[14 + 9] == 1 && frame[14 + 20] == 8;
                                                                                         if is_icmp_echo {
