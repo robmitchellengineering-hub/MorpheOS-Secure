@@ -35,25 +35,33 @@ pub fn load(buf: &[u8]) -> Option<u64> {
     let phoff = u64::from_le_bytes(buf[0x20..0x28].try_into().ok()?) as usize;
     let phentsize = u16::from_le_bytes(buf[0x36..0x38].try_into().ok()?) as usize;
     let phnum = u16::from_le_bytes(buf[0x38..0x3a].try_into().ok()?) as usize;
+    let mut loaded = false;
     for i in 0..phnum {
         let ph = phoff + i * phentsize;
-        if ph + 40 > 512 {
+        if ph + 56 > 512 {
             return None;
         }
         let p_type = u32::from_le_bytes(buf[ph..ph + 4].try_into().ok()?);
         if p_type == 1 {
-            // PT_LOAD: place the file bytes at p_vaddr.
+            // PT_LOAD: place the file bytes at p_vaddr, then zero the .bss tail (p_memsz - p_filesz).
             let p_offset = u64::from_le_bytes(buf[ph + 8..ph + 16].try_into().ok()?) as usize;
             let p_vaddr = u64::from_le_bytes(buf[ph + 16..ph + 24].try_into().ok()?) as usize;
             let p_filesz = u64::from_le_bytes(buf[ph + 32..ph + 40].try_into().ok()?) as usize;
-            // SAFETY: the segment is placed at the address the ELF declares, inside this Core's RAM.
+            let p_memsz = u64::from_le_bytes(buf[ph + 40..ph + 48].try_into().ok()?) as usize;
             for j in 0..p_filesz {
                 unsafe {
                     core::ptr::write_volatile((p_vaddr + j) as *mut u8, buf[p_offset + j]);
                 }
             }
-            return Some(entry);
+            // A real compiled program's .bss is p_memsz > p_filesz: memory that must start as zero, not as whatever
+            // the disk sector before it held.
+            for j in p_filesz..p_memsz {
+                unsafe {
+                    core::ptr::write_volatile((p_vaddr + j) as *mut u8, 0);
+                }
+            }
+            loaded = true;
         }
     }
-    None
+    if loaded { Some(entry) } else { None }
 }
