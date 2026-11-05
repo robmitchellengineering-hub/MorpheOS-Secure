@@ -1014,8 +1014,19 @@ pub extern "C" fn svc_handler(frame: *mut u64) {
                             let mut l = crate::uart::LineBuf::new();
                             l.push_str("SVC: sent a UDP datagram of ");
                             l.push_u64(n as u64);
-                            l.push_str(" bytes");
+                            l.push_str(" bytes (frame ");
+                            l.push_u64(len as u64);
+                            l.push_str(")");
                             l.flush(&uart);
+                            let (uidx, uid, ulen) = net::used_snapshot();
+                            let mut l2 = crate::uart::LineBuf::new();
+                            l2.push_str("SVC: used idx ");
+                            l2.push_u64(uidx as u64);
+                            l2.push_str(", id ");
+                            l2.push_u64(uid as u64);
+                            l2.push_str(", len ");
+                            l2.push_u64(ulen as u64);
+                            l2.flush(&uart);
                             n as u64
                         }
                         Err(e) => {
