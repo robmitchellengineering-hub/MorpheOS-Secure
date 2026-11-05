@@ -14,6 +14,9 @@ path = "src/main.rs"
 rob-core = { path = "../crates/rob-core" }
 # The mix engine itself, vendored with its no_std closure.
 rob-engine = { path = "../crates/rob-engine" }
+# The engine's own API surfaces the program drives directly.
+rob-node = { path = "../crates/rob-node" }
+rob-matrix = { path = "../crates/rob-matrix" }
 
 [features]
 # The net gate's --self-test mutation: the program emits a wrong SSRC, so the

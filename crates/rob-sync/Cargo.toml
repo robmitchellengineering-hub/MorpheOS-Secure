@@ -9,5 +9,11 @@ rust-version = "1.81"
 [dependencies]
 libm = "0.2"
 
+# The vendored copy drops the std network/thread modules; the feature is declared
+# empty so the `#[cfg(feature = "std")]` gates in the source stay un-compiled and
+# no unexpected-cfg warning is raised.
+[features]
+std = []
+
 [lints.rust]
 unsafe_code = "forbid"
