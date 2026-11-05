@@ -63,7 +63,9 @@ pub fn init() {
 pub fn init() {
     unsafe {
         let write = |addr: usize, v: u32| core::ptr::write_volatile(addr as *mut u32, v);
-        asm!("mrs x0, icc_sre_el1", "orr x0, x0, #1", "msr icc_sre_el1, x0", out("x0") _, options(nostack));
+        let sre: u64;
+        asm!("mrs {0}, icc_sre_el1", out(reg) sre, options(nostack));
+        asm!("msr icc_sre_el1, {0}", in(reg) sre | 1, options(nostack));
         asm!("isb", options(nostack));
         asm!("msr icc_pmr_el1, {0}", in(reg) 0xffu64, options(nostack));
         asm!("msr icc_igrpen1_el1, {0}", in(reg) 1u64, options(nostack));
@@ -72,6 +74,17 @@ pub fn init() {
         write(GICR_ISENABLER0, 1 << TIMER_INTID);
         write(GICD_CTLR, 1);
         let _ = core::ptr::read_volatile(GICR_ISENABLER0 as *const u32);
+        let uart = crate::uart::Uart::at(crate::uart::UART_QEMU_VIRT);
+        let mut l = crate::uart::LineBuf::new();
+        l.push_str("GICv3: SRE ");
+        let sre2: u64; asm!("mrs {0}, icc_sre_el1", out(reg) sre2, options(nostack)); l.push_u64(sre2);
+        l.push_str(", IGRPEN1 ");
+        let ig: u64; asm!("mrs {0}, icc_igrpen1_el1", out(reg) ig, options(nostack)); l.push_u64(ig);
+        l.push_str(", ISENABLER0 ");
+        l.push_hex(core::ptr::read_volatile(GICR_ISENABLER0 as *const u32) as u64);
+        l.push_str(", IGROUPR0 ");
+        l.push_hex(core::ptr::read_volatile(GICR_IGROUPR0 as *const u32) as u64);
+        l.flush(&uart);
     }
 }
 
