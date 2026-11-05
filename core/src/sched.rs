@@ -118,6 +118,20 @@ pub fn on_irq(sp: usize) -> usize {
         if cfg!(feature = "sched-mutant-no-switch") {
             return sp;
         }
+        static mut SW: u64 = 0;
+        SW += 1;
+        if SW % 100 == 0 {
+            let mut l = crate::uart::LineBuf::new();
+            l.push_str("SWITCH ");
+            l.push_u64(SW);
+            l.push_str(": cur ");
+            l.push_u64(cur as u64);
+            l.push_str(" -> next ");
+            l.push_u64(next as u64);
+            l.push_str(", incoming ");
+            l.push_u64(incoming);
+            l.flush(&crate::uart::Uart::at(crate::uart::UART_QEMU_VIRT));
+        }
         core::ptr::write_volatile(core::ptr::addr_of_mut!(CURRENT), next);
         core::ptr::write_volatile(core::ptr::addr_of_mut!(MOVED), core::ptr::read_volatile(core::ptr::addr_of!(MOVED)) + 1);
         incoming
