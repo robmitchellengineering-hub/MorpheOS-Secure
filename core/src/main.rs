@@ -60,6 +60,10 @@ pub static mut DTB_POINTER: usize = 0;
 #[unsafe(link_section = ".text")]
 static LOADED_CODE: [u32; 2] = [0xD280_0840, 0xD65F_03C0]; // mov x0,#0x42; ret -> 66
 
+/// Milestone 2: the same jump, but the bytes come from the disk at runtime.
+#[unsafe(link_section = ".text")]
+static mut LOAD_BUF: [u8; 8] = [0u8; 8];
+
 /// The mutation returns 0 instead of 66, so the gate can fail when the loaded code is wrong.
 #[cfg(feature = "load-mutant-wrong-result")]
 #[unsafe(link_section = ".text")]
@@ -530,6 +534,22 @@ fn fdt_demo(uart: &Uart) {
                                         }
                                         _ => uart.write_line("BLK: the write returned a non-zero status"),
                                     }
+                                        // MILESTONE 2: code from the disk, into executable memory, jumped to. The gate wrote mov x0,#0x42; ret into
+                                        // sector 2; the boot reads it back into LOAD_BUF and calls it.
+                                        let mut sector2 = [0u8; 512];
+                                        if let Ok(0) = blk::read_sector(&blk, 2, &mut sector2) {
+                                            unsafe {
+                                                for i in 0..8 {
+                                                    core::ptr::write_volatile((core::ptr::addr_of_mut!(LOAD_BUF) as *mut u8).add(i), sector2[i]);
+                                                }
+                                                let loaded: unsafe extern "C" fn() -> u64 = core::mem::transmute(core::ptr::addr_of!(LOAD_BUF) as *const ());
+                                                let r = loaded();
+                                                let mut l = uart::LineBuf::new();
+                                                l.push_str("LOAD: code loaded from disk returned ");
+                                                l.push_u64(r);
+                                                l.flush(&uart);
+                                            }
+                                        }
                                 }
                                 Ok(st) => { let mut l = uart::LineBuf::new(); l.push_str("BLK: read returned status "); l.push_u64(st as u64); l.flush(&uart); }
                                 Err(e) => uart.write_line(e),

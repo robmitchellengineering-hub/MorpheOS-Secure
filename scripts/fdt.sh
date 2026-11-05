@@ -21,6 +21,8 @@ LOG="$WORK/serial.log"; mkdir -p "$WORK"; rm -f "$LOG"
 truncate -s 64M "$WORK/disk.img" 2>/dev/null || dd if=/dev/zero of="$WORK/disk.img" bs=1M count=64 2>/dev/null
 # a known signature at sector 0, so the Core's read round-trips something it did not write
 printf 'MORPHEOS' | dd of="$WORK/disk.img" bs=1 count=8 conv=notrunc 2>/dev/null
+# mov x0,#0x42; ret, into sector 2 so the loader can read foreign code off the medium
+printf '\x40\x08\x80\xd2\xc0\x03\x5f\xd6' | dd of="$WORK/disk.img" bs=1 seek=1024 conv=notrunc 2>/dev/null
 # THE IMAGE PATH: a bare ELF gets no device tree in x0 (measured: x0 == 0), so this gate converts the same binary to an
 # arm64 Image and boots THAT. The header is in the source; objcopy makes the flat image the firmware protocol expects.
 IMG="$WORK/morph-core.img"
@@ -88,3 +90,6 @@ echo "ok: the Core read sector 0 and got back the signature the disk was written
 # A write is only proven by the read that follows it: the Core wrote CORE-WR1 to sector 1 and read it back.
 grep -qF "BLK: wrote and read back sector 1: CORE-WR1" "$LOG" || { echo "FAIL: the sector write did not round-trip" >&2; exit 1; }
 echo "ok: the Core wrote a sector and read it back"
+# LOADER MILESTONE 2: code read off the disk, copied into executable memory, and executed — the result must be 66.
+grep -qF "LOAD: code loaded from disk returned 66" "$LOG" || { echo "FAIL: code from the disk did not execute" >&2; exit 1; }
+echo "ok: the Core loaded foreign code off the disk and executed it"
