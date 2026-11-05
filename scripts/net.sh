@@ -23,10 +23,11 @@ export CARGO_TARGET_DIR="$WORK/target"
 echo "== building the Core (net)"
 # shellcheck disable=SC2086
 cargo build -q -p morph-core --target aarch64-unknown-none --release $FEATURES || { echo "FAIL: the Core did not build" >&2; exit 1; }
+cargo build -q -p morph-program --target aarch64-unknown-none --release || { echo "FAIL: the program did not build" >&2; exit 1; }
 ELF="$WORK/target/aarch64-unknown-none/release/morph-core"
 IMG="$WORK/morph-core.img"; PCAP="$WORK/net.pcap"
 mkdir -p "$WORK"; rm -f "$IMG" "$PCAP"
-python3 scripts/make-disk.py "$WORK/disk.img"
+python3 scripts/make-disk.py "$WORK/disk.img" "$WORK/target/aarch64-unknown-none/release/morph-program"
 python3 - "$ELF" "$IMG" <<'PATCH'
 import struct, sys
 data = open(sys.argv[1], 'rb').read()
@@ -214,6 +215,21 @@ print(1 if ok else 0)
 PYRTP
 )
 RTP_OK=${RTP_OK:-0}
+
+# THE ENGINE'S RTP: the loaded program's own stream, fixed SSRC 0xDEADBEEF, distinct from the demo's 8-packet stream.
+ENGINE_RTP=$(python3 - "$PCAP" <<'PYENG'
+import struct, sys
+d = open(sys.argv[1], 'rb').read()
+off, found = 24, 0
+while off + 16 <= len(d):
+    _, _, incl, _ = struct.unpack_from('<IIII', d, off); off += 16
+    f = d[off:off + incl]; off += incl
+    if len(f) >= 54 and f[12:14] == b' ' and f[23] == 17 and f[50:54] == bytes([0xDE, 0xAD, 0xBE, 0xEF]):
+        found += 1
+print(found)
+PYENG
+)
+ENGINE_RTP=${ENGINE_RTP:-0}
 
 # THE LOADED PROGRAM'S DATAGRAM. The API-surface rung sends a UDP datagram whose payload is MORPHEOS-SVC. It must be on
 # the wire with a CORRECT checksum — the same arithmetic the demo datagram proved, but carrying the loaded program's own
