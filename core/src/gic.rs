@@ -32,6 +32,8 @@ const GICC_EOIR: usize = GICC_BASE + 0x010;
 const GICR_WAKER: usize = GICR_BASE + 0x014;
 #[cfg(feature = "gic-v3")]
 const GICR_ISENABLER0: usize = GICR_BASE + 0x100;
+#[cfg(feature = "gic-v3")]
+const GICR_IGROUPR0: usize = GICR_BASE + 0x080;
 
 /// The EL1 physical timer's PPI.
 pub const TIMER_INTID: u32 = 30;
@@ -66,6 +68,7 @@ pub fn init() {
         asm!("msr icc_pmr_el1, {0}", in(reg) 0xffu64, options(nostack));
         asm!("msr icc_igrpen1_el1, {0}", in(reg) 1u64, options(nostack));
         write(GICR_WAKER, 0);
+        write(GICR_IGROUPR0, 1 << TIMER_INTID); // PPI 30 into group 1, which IGRPEN1 enables
         write(GICR_ISENABLER0, 1 << TIMER_INTID);
         write(GICD_CTLR, 1);
         let _ = core::ptr::read_volatile(GICR_ISENABLER0 as *const u32);
