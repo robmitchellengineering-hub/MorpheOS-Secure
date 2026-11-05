@@ -9,6 +9,9 @@ name = "morph-program"
 path = "src/main.rs"
 
 [dependencies]
+# Vendored from airmatrix's rob-core (rtp module) so the program builds the
+# AMT/ROB-shaped RTP header with the engine's own wire-format code.
+rob-core = { path = "../crates/rob-core" }
 
 [profile.release]
 panic = "abort"

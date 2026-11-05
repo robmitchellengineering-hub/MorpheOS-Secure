@@ -218,7 +218,12 @@ PYRTP
 )
 RTP_OK=${RTP_OK:-0}
 
-# THE ENGINE'S RTP: the loaded program's own stream, fixed SSRC 0xDEADBEEF, distinct from the demo's 8-packet stream.
+# THE ENGINE'S RTP: the loaded program's OWN packet, built with rob-core's
+# rtp::write_header — so it must carry the AMT/ROB header extension (0xBEDE
+# profile) AND the engine SSRC 0xC0FFEE00, distinct from the demo's 0xDEADBEEF.
+# The RTP first byte must be 0x90 (V=2, X=1: extension present). This is the
+# difference between "the Core emitted RTP" and "the program's engine-shaped
+# RTP reached the wire".
 ENGINE_RTP=$(python3 - "$PCAP" <<'PYENG'
 import struct, sys
 d = open(sys.argv[1], 'rb').read()
@@ -226,7 +231,11 @@ off, found = 24, 0
 while off + 16 <= len(d):
     _, _, incl, _ = struct.unpack_from('<IIII', d, off); off += 16
     f = d[off:off + incl]; off += incl
-    if len(f) >= 54 and f[12:14] == bytes([8, 0]) and f[23] == 17 and f[50:54] == bytes([0xC0, 0xFF, 0xEE, 0x00]):
+    # Ethernet 14 + IPv4 20 + UDP 8 = 42; RTP header 12, then the 0xBEDE
+    # extension profile at RTP bytes 12..14.
+    if len(f) >= 56 and f[12:14] == bytes([8, 0]) and f[23] == 17 \
+       and f[42] == 0x90 and f[50:54] == bytes([0xC0, 0xFF, 0xEE, 0x00]) \
+       and f[54:56] == bytes([0xBE, 0xDE]):
         found += 1
 print(found)
 PYENG

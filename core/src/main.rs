@@ -979,6 +979,7 @@ pub extern "C" fn svc_handler(frame: *mut u64) {
     unsafe {
         let n = core::ptr::read_volatile(frame);
         let arg0 = core::ptr::read_volatile(frame.add(1)); // x1: the syscall's first argument
+        let arg1 = core::ptr::read_volatile(frame.add(2)); // x2: the syscall's second argument
         let uart = crate::uart::Uart::at(crate::uart::UART_QEMU_VIRT);
         let result = match n {
             0 => {
@@ -1054,25 +1055,53 @@ pub extern "C" fn svc_handler(frame: *mut u64) {
                 }
             }
             4 => {
-                // send_rtp: the engine's own RTP stream — a fixed SSRC, distinct from the demo's, so the wire can
-                // attribute this packet to the loaded program.
+                // send_rtp: the loaded program's OWN RTP packet. x1 = pointer to the RTP bytes, x2 = length. The Core
+                // wraps those exact bytes in a UDP datagram (port 5004) and transmits them — it does not compose the
+                // header. That is the difference between "the Core emitted RTP" and "the engine's RTP packet reached the
+                // wire": the program built the AMT-shaped header with rob-core, and the Core only carried it.
                 let base = NET_BASE.load(core::sync::atomic::Ordering::Relaxed) as usize;
                 if base == 0 {
                     uart.write_line("SVC: no network device — send_rtp refused");
                     u64::MAX
                 } else {
-                    let mac = mac_unpack(OUR_MAC.load(core::sync::atomic::Ordering::Relaxed));
-                    let gw = mac_unpack(GW_MAC.load(core::sync::atomic::Ordering::Relaxed));
-                    let dev = net::Device { base, mac, queue_num: 0 };
-                    let (frame, len) = rtp::packet(mac, ip::OUR_IP, gw, ip::GATEWAY_IP, 9000, 5004, 100, 4800, 0xC0FF_EE00);
-                    match net::transmit(&dev, &frame[..len]) {
-                        Ok(n) => {
-                            uart.write_line("SVC: sent an RTP packet (engine stream, SSRC 0xDEADBEEF)");
-                            n as u64
+                    let ptr = arg0 as *const u8;
+                    let len = arg1 as usize;
+                    // A UDP datagram's payload ceiling is the 256-byte transmit buffer minus the 42 bytes of Ethernet,
+                    // IPv4 and UDP header. Anything past that is not a packet, it is a fault waiting to read past the
+                    // program's data.
+                    if len == 0 || len > 214 {
+                        uart.write_line("SVC: send_rtp refused — the RTP length is not a packet");
+                        u64::MAX
+                    } else {
+                        let mut rtp_bytes = [0u8; 214];
+                        for i in 0..len {
+                            rtp_bytes[i] = core::ptr::read_volatile(ptr.add(i));
                         }
-                        Err(e) => {
-                            uart.write_line(e);
-                            u64::MAX
+                        let mac = mac_unpack(OUR_MAC.load(core::sync::atomic::Ordering::Relaxed));
+                        let gw = mac_unpack(GW_MAC.load(core::sync::atomic::Ordering::Relaxed));
+                        let dev = net::Device { base, mac, queue_num: 0 };
+                        let (frame, flen) = udp::datagram(
+                            mac,
+                            ip::OUR_IP,
+                            gw,
+                            ip::GATEWAY_IP,
+                            9000,
+                            5004,
+                            &rtp_bytes[..len],
+                        );
+                        match net::transmit(&dev, &frame[..flen]) {
+                            Ok(n) => {
+                                let mut l = crate::uart::LineBuf::new();
+                                l.push_str("SVC: sent the program's RTP packet of ");
+                                l.push_u64(len as u64);
+                                l.push_str(" bytes");
+                                l.flush(&uart);
+                                n as u64
+                            }
+                            Err(e) => {
+                                uart.write_line(e);
+                                u64::MAX
+                            }
                         }
                     }
                 }
