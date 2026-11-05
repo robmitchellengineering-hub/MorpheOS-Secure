@@ -66,10 +66,10 @@ pub fn read_sector(dev: &Blk, sector: u64, out: &mut [u8; 512]) -> Result<u8, &'
 
         // Request header: type 0 (read), reserved 0, sector (little-endian u64).
         for i in 0..4 {
-            core::ptr::write_volatile(core::ptr::addr_of_mut!(REQUEST).add(i), 0); // type = 0 (IN/read), reserved
+            core::ptr::write_volatile((core::ptr::addr_of_mut!(REQUEST) as *mut u8).add(i), 0); // type = 0 (IN/read), reserved
         }
         for i in 0..8 {
-            core::ptr::write_volatile(core::ptr::addr_of_mut!(REQUEST).add(8 + i), ((sector >> (8 * i)) & 0xff) as u8);
+            core::ptr::write_volatile((core::ptr::addr_of_mut!(REQUEST) as *mut u8).add(8 + i), ((sector >> (8 * i)) & 0xff) as u8);
         }
 
         // Three chained descriptors: header (device reads), data (device writes), status (device writes).
