@@ -35,6 +35,8 @@ const GICR_WAKER: usize = GICR_BASE + 0x014;
 #[cfg(feature = "gic-v3")]
 const GICR_ISENABLER0: usize = GICR_BASE + 0x10000 + 0x100; // SGI page
 #[cfg(feature = "gic-v3")]
+const GICR_IPRIORITYR: usize = GICR_BASE + 0x10000 + 0x400; // SGI page, byte-addressed
+#[cfg(feature = "gic-v3")]
 const GICR_IGROUPR0: usize = GICR_BASE + 0x10000 + 0x080; // SGI page
 
 /// The EL1 physical timer's PPI.
@@ -73,6 +75,7 @@ pub fn init() {
         asm!("msr icc_igrpen0_el1, {0}", in(reg) 1u64, options(nostack));
         write(GICR_WAKER, 0);
         write(GICR_CTLR, 1); // EnableGrp0 — the timer PPI is group 0, same as the GICv2 path
+        write(GICR_IPRIORITYR + 28, 0x0000_0000); // INTIDs 28..31 to priority 0 (highest) — 0xFF default is below the PMR
         write(GICR_ISENABLER0, 1 << TIMER_INTID);
         write(GICD_CTLR, 1); // EnableGrp0 for SPIs
         let _ = core::ptr::read_volatile(GICR_ISENABLER0 as *const u32);
