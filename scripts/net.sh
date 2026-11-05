@@ -234,7 +234,7 @@ off, found = 24, 0
 while off + 16 <= len(d):
     _, _, incl, _ = struct.unpack_from('<IIII', d, off); off += 16
     f = d[off:off + incl]; off += incl
-    if len(f) < 54 or f[12:14] != b' ' or f[23] != 17:
+    if len(f) < 54 or f[12:14] != bytes([8, 0]) or f[23] != 17:
         continue
     if f[26:30] != bytes([10, 0, 2, 15]):
         continue
