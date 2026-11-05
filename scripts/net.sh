@@ -26,6 +26,7 @@ cargo build -q -p morph-core --target aarch64-unknown-none --release $FEATURES |
 ELF="$WORK/target/aarch64-unknown-none/release/morph-core"
 IMG="$WORK/morph-core.img"; PCAP="$WORK/net.pcap"
 mkdir -p "$WORK"; rm -f "$IMG" "$PCAP"
+python3 scripts/make-disk.py "$WORK/disk.img"
 python3 - "$ELF" "$IMG" <<'PATCH'
 import struct, sys
 data = open(sys.argv[1], 'rb').read()
@@ -50,6 +51,7 @@ PATCH
 timeout "${NET_TIMEOUT:-40}" qemu-system-aarch64 -M virt -cpu cortex-a76 -m 256M \
     -kernel "$IMG" -nographic -monitor none -serial stdio \
     -netdev user,id=n0 -device virtio-net-device,netdev=n0 \
+    -device virtio-blk-device,drive=d0 -drive file="$WORK/disk.img",if=none,id=d0,format=raw \
     -global virtio-mmio.force-legacy=false \
     -object filter-dump,id=f0,netdev=n0,file="$PCAP" > "$WORK/serial.log" 2>&1
 
@@ -213,8 +215,45 @@ PYRTP
 )
 RTP_OK=${RTP_OK:-0}
 
+# THE LOADED PROGRAM'S DATAGRAM. The API-surface rung sends a UDP datagram whose payload is MORPHEOS-SVC. It must be on
+# the wire with a CORRECT checksum — the same arithmetic the demo datagram proved, but carrying the loaded program's own
+# payload. This is the difference between 'a datagram left' and 'the loaded program's datagram left'.
+SVC_UDP=$(python3 - "$PCAP" <<'PYSVC'
+import struct, sys
+d = open(sys.argv[1], 'rb').read()
+def cksum(b):
+    s = 0
+    for i in range(0, len(b) - 1, 2):
+        s += (b[i] << 8) | b[i + 1]
+    if len(b) % 2:
+        s += b[-1] << 8
+    while s >> 16:
+        s = (s & 0xffff) + (s >> 16)
+    return (~s) & 0xffff
+off, found = 24, 0
+while off + 16 <= len(d):
+    _, _, incl, _ = struct.unpack_from('<IIII', d, off); off += 16
+    f = d[off:off + incl]; off += incl
+    if len(f) < 54 or f[12:14] != bytes([8, 0]) or f[23] != 17:
+        continue
+    if f[26:30] != bytes([10, 0, 2, 15]):
+        continue
+    udp_len = (f[38] << 8) | f[39]
+    if udp_len < 8 or 34 + udp_len > len(f):
+        continue
+    seg = bytearray(f[34:34 + udp_len]); seg[6] = 0; seg[7] = 0
+    ph = f[26:30] + f[30:34] + bytes([0, 17]) + udp_len.to_bytes(2, 'big') + bytes(seg)
+    if f[40:42] != cksum(ph).to_bytes(2, 'big'):
+        continue
+    if b'MORPHEOS-SVC' in f[42:42 + udp_len - 8]:
+        found += 1
+print(found)
+PYSVC
+)
+SVC_UDP=${SVC_UDP:-0}
+
 if [ "$MODE" = "--self-test" ]; then
-    if [ "$GOOD_ICMP" -ne 0 ] || [ "$GOOD_UDP" -ne 0 ] || [ "$RTP_OK" -ne 0 ]; then
+    if [ "$GOOD_ICMP" -ne 0 ] || [ "$GOOD_UDP" -ne 0 ] || [ "$SVC_UDP" -ne 0 ] || [ "$RTP_OK" -ne 0 ]; then
         echo "FAIL (self-test): a bad-checksum mutation still produced a valid datagram" >&2; exit 1
     fi
     echo "ok (self-test): with wrong checksums no valid reply or datagram is accepted — the check reads the arithmetic"
@@ -232,6 +271,11 @@ if [ "$UDP_PARSED" -eq 0 ]; then
     echo "FAIL: the Core did not parse an inbound datagram" >&2; exit 1
 fi
 echo "ok: the Core parsed an inbound UDP datagram — ports and length read back"
+
+if [ "$SVC_UDP" -eq 0 ]; then
+    echo "FAIL: the loaded program's datagram (MORPHEOS-SVC) did not reach the wire" >&2; exit 1
+fi
+echo "ok: the loaded program's UDP datagram reached the wire, checksum correct"
 
 if [ "$RTP_OK" -eq 0 ]; then
     echo "FAIL: no RTP stream with monotonic sequence and a 48-sample step reached the wire" >&2; exit 1
