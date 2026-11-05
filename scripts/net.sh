@@ -16,7 +16,7 @@ WORK=${NET_WORK:-target/net}
 case "$MODE" in --self-test) WORK="$WORK/selftest" ;; *) WORK="$WORK/check" ;; esac
 case "$MODE" in check|--self-test) ;; *) echo "usage: net.sh [--self-test]" >&2; exit 2 ;; esac
 FEATURES=""
-if [ "$MODE" = "--self-test" ]; then FEATURES="--features ip-mutant-bad-checksum"; fi
+if [ "$MODE" = "--self-test" ]; then FEATURES="--features ip-mutant-bad-checksum,udp-mutant-bad-checksum"; fi
 command -v cargo >/dev/null 2>&1 || { echo "REFUSED: no cargo here" >&2; exit 2; }
 command -v qemu-system-aarch64 >/dev/null 2>&1 || { echo "REFUSED: no qemu-system-aarch64 here" >&2; exit 2; }
 export CARGO_TARGET_DIR="$WORK/target"
@@ -154,14 +154,60 @@ print(found)
 PYICMP
 )
 GOOD_ICMP=${GOOD_ICMP:-0}
+
+# RUNG 2 OF THE IP CHUNK. UDP out (proto 17 from us, correct UDP checksum over the RFC 768 pseudo-header) and UDP in
+# (the Core parses a datagram and reports the ports). The checksum is recomputed on the host side; the mutation makes it
+# wrong, so a wrong-checksum datagram is not a stack either.
+GOOD_UDP=$(python3 - "$PCAP" <<'PYUDP'
+import struct, sys
+d = open(sys.argv[1], 'rb').read()
+def cksum(b):
+    s = 0
+    for i in range(0, len(b) - 1, 2):
+        s += (b[i] << 8) | b[i + 1]
+    if len(b) % 2:
+        s += b[-1] << 8
+    while s >> 16:
+        s = (s & 0xffff) + (s >> 16)
+    return (~s) & 0xffff
+off, found = 24, 0
+while off + 16 <= len(d):
+    _, _, incl, _ = struct.unpack_from('<IIII', d, off); off += 16
+    f = d[off:off + incl]; off += incl
+    if len(f) < 42 or f[12:14] != b'\x08\x00' or f[23] != 17:
+        continue
+    if f[26:30] != bytes([10, 0, 2, 15]):
+        continue
+    udp_len = (f[38] << 8) | f[39]
+    if udp_len < 8 or 34 + udp_len > len(f):
+        continue
+    seg = bytearray(f[34:34 + udp_len]); seg[6] = 0; seg[7] = 0
+    ph = f[26:30] + f[30:34] + bytes([0, 17]) + udp_len.to_bytes(2, 'big') + bytes(seg)
+    if f[40:42] != cksum(ph).to_bytes(2, 'big'):
+        continue
+    found += 1
+print(found)
+PYUDP
+)
+GOOD_UDP=${GOOD_UDP:-0}
+UDP_PARSED=$(grep -c "NET: UDP parsed — src port 9999" "$WORK/serial.log" || true)
+
 if [ "$MODE" = "--self-test" ]; then
-    if [ "$GOOD_ICMP" -ne 0 ]; then
-        echo "FAIL (self-test): the bad-checksum mutation still produced a valid reply" >&2; exit 1
+    if [ "$GOOD_ICMP" -ne 0 ] || [ "$GOOD_UDP" -ne 0 ]; then
+        echo "FAIL (self-test): a bad-checksum mutation still produced a valid datagram" >&2; exit 1
     fi
-    echo "ok (self-test): with a wrong checksum no valid reply is accepted, so the check reads the arithmetic"
+    echo "ok (self-test): with wrong checksums no valid reply or datagram is accepted — the check reads the arithmetic"
     exit 0
 fi
 if [ "$GOOD_ICMP" -eq 0 ]; then
     echo "FAIL: no ICMP echo reply with a correct checksum reached the wire" >&2; exit 1
 fi
 echo "ok: an ICMP echo reply the Core computed, with correct IP and ICMP checksums, reached the wire"
+if [ "$GOOD_UDP" -eq 0 ]; then
+    echo "FAIL: no UDP datagram with a correct checksum reached the wire" >&2; exit 1
+fi
+echo "ok: a UDP datagram the Core computed, with a correct checksum, reached the wire"
+if [ "$UDP_PARSED" -eq 0 ]; then
+    echo "FAIL: the Core did not parse an inbound datagram" >&2; exit 1
+fi
+echo "ok: the Core parsed an inbound UDP datagram — ports and length read back"
