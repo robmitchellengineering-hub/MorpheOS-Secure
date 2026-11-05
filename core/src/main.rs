@@ -541,6 +541,9 @@ fn fdt_demo(uart: &Uart) {
                                             match net::start_rx(&dev) {
                                                 Ok(()) => {
                                                     uart.write_line("NET: eight receive buffers are offered to the device");
+                                                    // ASK AGAIN, NOW THAT THE BUFFERS EXIST. Measured: the reply to the first request had nowhere to land,
+                                                    // because the receive queue was set up after the transmit. A device with no descriptors drops the frame.
+                                                    let _ = net::transmit(&dev, &frame[..len]);
                                                     match net::poll_rx(&dev, 50_000_000) {
                                                         Some(r) => {
                                                             let mut l = uart::LineBuf::new();
