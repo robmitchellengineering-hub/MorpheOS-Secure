@@ -403,7 +403,6 @@ extern "C" fn after_task_aborted() -> ! {
     uart.write_line("M4c: TASK ABORTED — the Core resumed on its own stack, the evidence stays, the boot continues");
     uart.write_line(DONE);
     boot_epilogue(&uart);
-    execute_loaded(&uart);
     loop {
         // SAFETY: an aborted task's continuation has nothing to return to on this rung.
         unsafe { core::arch::asm!("wfe", options(nomem, nostack)) };
@@ -901,6 +900,9 @@ else {
         Err(_) => uart.write_line("FDT: FAIL no arm,pl011 node was found in the tree"),
     }
 
+    // The loaded program runs here, at the end of the device-tree demo — after the network is up (queue started, gateway
+    // MAC learned) and BEFORE the isolation demo switches page tables. Its syscalls (send_udp) have subjects.
+    execute_loaded(uart);
 }
 
 /// M0c's demonstration: the boot decision exercised through the five states that matter, printed so a person can read
@@ -1561,7 +1563,6 @@ pub extern "C" fn kmain() -> ! {
     uart.write_line(DONE);
 
     boot_epilogue(&uart);
-    execute_loaded(&uart);
     // The epilogue returns when preemption is not built in; kmain never does.
     loop {
         // SAFETY: nothing left to return to.
