@@ -84,3 +84,42 @@ a fault during device probing is exactly the kind of thing that turns into a mys
 An edit keyed on exact surrounding text failed because a previous insertion had changed that text's indentation, and
 the script aborted before writing — the same class of failure as the line-range move that swallowed five demos. In a
 file that edits have reshaped, **anchor on a line verified in this session, or rewrite the whole block.**
+
+## DRIVER STATE, 2026-11-04 — the device is up, the wire is still silent
+
+A virtio-net driver now exists and brings the device up. It does **not** yet send a frame, and the plan must say so.
+
+### Measured, in order
+```
+NET: a virtio-mmio window at 0xa000000 is described by the firmware
+NET: window 31 at 0xa003e00 — version 1, device 1
+NET: the network device is at 0xa003e00 — chosen by its own device id
+NET: features offered 0x39bf8064, status now 0xf
+NET: the device's MAC is 52:54:00:12:34:56
+NET: the queue's rings are in our own memory, addressed by page frame
+the device never completed the descriptor
+```
+
+So: the transport is **legacy (version 1)**, the device is at **slot 31** (not the first window the tree names),
+the status handshake reaches **`DRIVER_OK`**, and the **MAC is read from the device's own config space** — a value only a
+real device can supply. Then the descriptor ring is offered and **never completed**, and the host-side capture holds a
+pcap header and nothing else: **no frame left the machine.**
+
+### Facts that are clean, so do not re-check them
+| fact | reading |
+|---|---|
+| status after the kick | `0xf`, no `DEVICE_NEEDS_RESET` (bit 6) — the device has not rejected the queue |
+| `QueuePFN` readback | `0x4009c` — our rings' page frame landed, inside RAM |
+| magic / version / device id | `"virt"` / legacy / id 1 |
+| features | `0x39bf8064`, one bit accepted |
+
+### The open question, stated so it can be settled by observation
+`QueueNum` readback is **0** after writing 8, **with `QueueSel = 0` written first**. Two possibilities: the register is
+write-only in this implementation, or the write path to the queue is not what the driver believes. Selecting the queue
+explicitly changed nothing, so the next step is **comparison, not another hypothesis**: run a stock legacy driver
+(Linux's `virtio_mmio`) against the same QEMU invocation and dump the register sequence it actually performs while a
+frame goes out. Six measurements have been made; the seventh should be a known-good trace.
+
+### What is deliberately not in this driver yet
+No receive path, no protocol stack, no checksums, no retries. The milestone is one frame the host's pcap contains —
+nothing above it is worth writing until that is true.
