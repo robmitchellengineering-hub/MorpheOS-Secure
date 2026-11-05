@@ -6,10 +6,9 @@ description = "Vendored rob-core (rtp only) from the AirMatrix repo — the wire
 license = "LicenseRef-Proprietary"
 rust-version = "1.81"
 
+# The vendored rtp module is pure byte manipulation — no alloc, no libm — so the
+# program links it without needing a global allocator.
 [dependencies]
-# Float rounding/transcendentals for no_std (rob-core uses round in aes67; the
-# vendored rtp module does not, but the full crate does — keep the parity).
-libm = "0.2"
 
-[lints]
+[lints.rust]
 unsafe_code = "forbid"
