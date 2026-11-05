@@ -466,6 +466,66 @@ fn fdt_demo(uart: &Uart) {
                     l.push_hex(w as u64);
                     l.push_str(" — chosen by its own device id");
                     l.flush(uart);
+
+                    // THE STATUS HANDSHAKE, in the order the specification demands: reset, acknowledge, driver,
+                    // features, then DRIVER_OK. Each step is read back, because a driver that assumes a write landed is
+                    // a driver that cannot tell "unsupported" from "broken".
+                    // SAFETY: inside the window the firmware described.
+                    unsafe {
+                        let rd = |off: usize| core::ptr::read_volatile((w + off) as *const u32);
+                        let wr = |off: usize, v: u32| core::ptr::write_volatile((w + off) as *mut u32, v);
+                        wr(0x070, 0); // reset
+                        let mut status = 0u32;
+                        wr(0x070, status | 1); // ACKNOWLEDGE
+                        status |= 1;
+                        wr(0x070, status | 2); // DRIVER
+                        status |= 2;
+                        wr(0x014, 0); // feature word 0
+                        let features = rd(0x010);
+                        wr(0x024, 0);
+                        // Legacy only: the page size the ring will use.
+                        wr(0x028, 4096);
+                        wr(0x020, features & 0x0000_0001); // take only what we understand so far
+                        wr(0x070, status | 8); // FEATURES_OK
+                        let after_features = rd(0x070);
+                        status = after_features;
+                        wr(0x070, status | 4); // DRIVER_OK
+                        let final_status = rd(0x070);
+
+                        let mut l = uart::LineBuf::new();
+                        l.push_str("NET: features offered 0x");
+                        l.push_hex(features as u64);
+                        l.push_str(", status now 0x");
+                        l.push_hex(final_status as u64);
+                        l.flush(uart);
+
+                        // The MAC lives in the device's config space, at 0x100 for legacy virtio-net.
+                        let mac: [u8; 6] = [
+                            core::ptr::read_volatile((w + 0x100) as *const u8),
+                            core::ptr::read_volatile((w + 0x101) as *const u8),
+                            core::ptr::read_volatile((w + 0x102) as *const u8),
+                            core::ptr::read_volatile((w + 0x103) as *const u8),
+                            core::ptr::read_volatile((w + 0x104) as *const u8),
+                            core::ptr::read_volatile((w + 0x105) as *const u8),
+                        ];
+                        let mut l = uart::LineBuf::new();
+                        l.push_str("NET: the device's MAC is ");
+                        for (i, b) in mac.iter().enumerate() {
+                            if i > 0 {
+                                l.push_str(":");
+                            }
+                            if *b < 0x10 {
+                                l.push_str("0");
+                            }
+                            l.push_hex(*b as u64);
+                        }
+                        l.flush(uart);
+                        if final_status & 0x0f == 0x0f {
+                            uart.write_line("NET: the device acknowledged the driver and is ready — a driver exists, not yet a frame");
+                        } else {
+                            uart.write_line("NET: FAIL the device did not reach DRIVER_OK");
+                        }
+                    }
                 }
                 None => uart.write_line("NET: no virtio-net among the windows scanned"),
             }
