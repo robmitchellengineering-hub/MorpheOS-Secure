@@ -283,7 +283,7 @@ vectors:
     .balign 128
     b irq_entry
     .balign 128
-    b fault_entry
+    b irq_entry
     .balign 128
     b fault_entry
     .balign 128
