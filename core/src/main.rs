@@ -593,14 +593,15 @@ fn fdt_demo(uart: &Uart) {
                                     }
                                         // ELF LOAD. Read the ELF off the disk, place its PT_LOAD segment at the declared address, and call the entry.
                                         // The result (66) can only appear if a COMPILED program was placed in memory and executed.
-                                        let mut elfbuf = [0u8; 1024];
+                                        let mut elfbuf = [0u8; 5120];
                                         let mut sec = [0u8; 512];
-                                        let mut elf_ok = false;
-                                        if let Ok(0) = blk::read_sector(&blk, 4, &mut sec) {
-                                            elfbuf[0..512].copy_from_slice(&sec);
-                                            if let Ok(0) = blk::read_sector(&blk, 5, &mut sec) {
-                                                elfbuf[512..1024].copy_from_slice(&sec);
-                                                elf_ok = true;
+                                        let mut elf_ok = true;
+                                        for s in 0..10usize {
+                                            if let Ok(0) = blk::read_sector(&blk, 4 + s as u64, &mut sec) {
+                                                elfbuf[s * 512..(s + 1) * 512].copy_from_slice(&sec);
+                                            } else {
+                                                elf_ok = false;
+                                                break;
                                             }
                                         }
                                         if elf_ok {

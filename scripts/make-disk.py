@@ -63,5 +63,12 @@ tail = bytes([0x00,0x00,0x80,0xD2, 0x01,0x00,0x00,0xD4, 0x20,0x00,0x80,0xD2, 0x4
 e[176:776] = nops + tail
 disk[2048:2048 + 776] = e
 
+# If a compiled program ELF is provided, it replaces the hand-crafted program (sectors 4+).
+import os
+_elf_path = sys.argv[2] if len(sys.argv) > 2 else None
+if _elf_path and os.path.exists(_elf_path):
+    _e = bytearray(open(_elf_path, "rb").read()[:5120])
+    disk[2048:2048 + len(_e)] = _e
+
 open(path, "wb").write(bytes(disk))
 print("disk built:", len(disk), "bytes")
