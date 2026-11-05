@@ -181,17 +181,17 @@ pub fn arp_request(mac: [u8; 6]) -> ([u8; 42], usize) {
     for i in 0..6 {
         f[22 + i] = mac[i]; // sender hardware
     }
-    f[28] = 10;
-    f[29] = 0;
-    f[30] = 2;
-    f[31] = 15; // sender protocol: 10.0.2.15
+    let our = crate::ip::OUR_IP;
+    let gateway = crate::ip::GATEWAY_IP;
+    for i in 0..4 {
+        f[28 + i] = our[i]; // sender protocol: us
+    }
     for i in 0..6 {
         f[32 + i] = 0; // target hardware unknown
     }
-    f[38] = 10;
-    f[39] = 0;
-    f[40] = 2;
-    f[41] = 2; // target protocol: 10.0.2.2, QEMU's gateway
+    for i in 0..4 {
+        f[38 + i] = gateway[i]; // target protocol: the gateway, wherever the config says it is
+    }
     (f, 42)
 }
 
@@ -217,17 +217,17 @@ pub fn arp_request_from(peer_mac: [u8; 6]) -> ([u8; 42], usize) {
     for i in 0..6 {
         f[22 + i] = peer_mac[i]; // sender hardware
     }
-    f[28] = 10;
-    f[29] = 0;
-    f[30] = 2;
-    f[31] = 2; // sender protocol: 10.0.2.2
+    let our = crate::ip::OUR_IP;
+    let gateway = crate::ip::GATEWAY_IP;
+    for i in 0..4 {
+        f[28 + i] = gateway[i]; // sender protocol: the asker
+    }
     for i in 0..6 {
         f[32 + i] = 0; // target hardware unknown
     }
-    f[38] = 10;
-    f[39] = 0;
-    f[40] = 2;
-    f[41] = 15; // target protocol: 10.0.2.15 — us
+    for i in 0..4 {
+        f[38 + i] = our[i]; // target protocol: us, wherever the config says we are
+    }
     (f, 42)
 }
 
@@ -252,10 +252,10 @@ pub fn arp_reply(request: &[u8], mac: [u8; 6]) -> ([u8; 42], usize) {
     for i in 0..6 {
         f[22 + i] = mac[i]; // sender hardware = us
     }
-    f[28] = 10;
-    f[29] = 0;
-    f[30] = 2;
-    f[31] = 15; // sender protocol = us, 10.0.2.15
+    let our = crate::ip::OUR_IP;
+    for i in 0..4 {
+        f[28 + i] = our[i]; // sender protocol = us
+    }
     for i in 0..6 {
         f[32 + i] = request[22 + i]; // target hardware = the asker
     }
