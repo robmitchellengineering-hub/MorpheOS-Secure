@@ -1439,6 +1439,14 @@ pub extern "C" fn kmain() -> ! {
     }
     let arrived = gic::ticks();
     let irq_ns = clock::ns_between(irq_start, clock::now());
+    {
+        let mut l = uart::LineBuf::new();
+        l.push_str("TICK: pending IAR0=");
+        let a0: u64; unsafe { core::arch::asm!("mrs {0}, icc_iar0_el1", out(reg) a0, options(nostack)) }; l.push_u64(a0);
+        l.push_str(", IAR1=");
+        let a1: u64; unsafe { core::arch::asm!("mrs {0}, icc_iar1_el1", out(reg) a1, options(nostack)) }; l.push_u64(a1);
+        l.flush(&uart);
+    }
     // SAFETY: mask interrupts again so the rest of the boot is deterministic.
     unsafe { core::arch::asm!("msr daifset, #2", options(nostack)) };
     if arrived >= 3 {
