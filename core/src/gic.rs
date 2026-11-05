@@ -38,8 +38,6 @@ const GICR_ISENABLER0: usize = GICR_BASE + 0x10000 + 0x100; // SGI page
 const GICR_IPRIORITYR: usize = GICR_BASE + 0x10000 + 0x400; // SGI page, byte-addressed
 #[cfg(feature = "gic-v3")]
 const GICR_IGROUPR0: usize = GICR_BASE + 0x10000 + 0x080; // SGI page
-#[cfg(feature = "gic-v3")]
-const GICR_IGROUPR0: usize = GICR_BASE + 0x10000 + 0x080; // SGI page
 
 /// The EL1 physical timer's PPI.
 pub const TIMER_INTID: u32 = 30;
