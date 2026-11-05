@@ -220,7 +220,10 @@ pub fn start_rx(dev: &Device) -> Result<(), &'static str> {
         let avail = rings.add(AVAIL_OFF);
         for i in 0..max as usize {
             let buf = (&raw mut RX_BUFFERS as *mut u8).add(i * RX_BUF_LEN);
-            core::ptr::write_volatile((desc as *mut u64).add(i), buf as u64);
+            // A descriptor is 16 bytes: addr u64 at 0, len u32 at 8, flags u16 at 12, next u16 at 14. Measured: writing
+            // the address with a u64 stride of 1 put descriptor 1's address on top of descriptor 0's length, and the
+            // device answered "bogus descriptor or out of resources" - the device naming the driver's arithmetic error.
+            core::ptr::write_volatile((desc as *mut u64).add(i * 2), buf as u64);
             core::ptr::write_volatile((desc as *mut u32).add(i * 4 + 2), RX_BUF_LEN as u32);
             core::ptr::write_volatile((desc as *mut u16).add(i * 8 + 6), 2); // VIRTQ_DESC_F_WRITE
             core::ptr::write_volatile((desc as *mut u16).add(i * 8 + 7), 0);
