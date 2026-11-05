@@ -1008,7 +1008,7 @@ pub extern "C" fn svc_handler(frame: *mut u64) {
                 l.flush(&uart);
                 n
             }
-            3 => {            3 => {
+            3 => {
                 // send_udp: compose a UDP datagram and put it on the wire. The device base and the gateway MAC were
                 // threaded out of the network demo; the queue is already started, so the transmit continues the monotonic
                 // descriptor sequence.
