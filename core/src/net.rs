@@ -120,7 +120,11 @@ pub fn transmit(dev: &Device, frame: &[u8]) -> Result<u32, &'static str> {
         let avail = rings.add(AVAIL_OFF);
         core::ptr::write_volatile(avail as *mut u16, 0); // flags
         core::ptr::write_volatile((avail as *mut u16).add(1), my_idx); // idx: must grow
-        core::ptr::write_volatile((avail as *mut u16).add(2), 0); // ring[0] = descriptor 0
+        // ring[(idx-1) % QueueNum] = descriptor head. Measured: writing ring[0] every time worked only until the ring
+        // wrapped — the device reads the slot for ITS index, and after 8 frames it read a stale slot. The 14th frame
+        // completed with len 0 for exactly this reason.
+        let ring_slot = (my_idx.wrapping_sub(1) as usize) % 8;
+        core::ptr::write_volatile((avail as *mut u16).add(2 + ring_slot), 0);
 
         // Kick the transmit queue, then wait for the completion that matches THIS index.
         wr(dev.base, 0x050, 1);
