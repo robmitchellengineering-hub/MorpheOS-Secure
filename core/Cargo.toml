@@ -52,3 +52,6 @@ cap-mutant-widen = []
 # M7d's mutation: trust a box's claim without checking it, the exact mistake admission exists to forbid.
 box-mutant-trust-claim = []
 fdt-mutant-skip-walk = []
+# M0c's mutation: commit whatever booted, so an unhealthy trial becomes permanent — the boot loop the record exists
+# to prevent.
+ab-mutant-commit-always = []
