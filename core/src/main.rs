@@ -539,6 +539,21 @@ fn fdt_demo(uart: &Uart) {
                                         }
                                         Err(e) => {
                                             uart.write_line(e);
+                                            let (addr, len, flags, aflags, aidx, aring0, _) = net::ring_snapshot();
+                                            let mut l = uart::LineBuf::new();
+                                            l.push_str("NET: ring read back — desc.addr ");
+                                            l.push_hex(addr);
+                                            l.push_str(", len ");
+                                            l.push_u64(len as u64);
+                                            l.push_str(", flags ");
+                                            l.push_u64(flags as u64);
+                                            l.push_str("; avail.flags ");
+                                            l.push_u64(aflags as u64);
+                                            l.push_str(", idx ");
+                                            l.push_u64(aidx as u64);
+                                            l.push_str(", ring[0] ");
+                                            l.push_u64(aring0 as u64);
+                                            l.flush(&uart);
                                             // WHAT DOES THE DEVICE THINK? A queue the device refused and a queue it never
                                             // read look identical from the outside - both are a timeout. The status
                                             // register tells them apart: bit 6 is DEVICE_NEEDS_RESET, and the PFN

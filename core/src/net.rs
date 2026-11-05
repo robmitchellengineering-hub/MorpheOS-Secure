@@ -120,6 +120,24 @@ pub fn transmit(dev: &Device, frame: &[u8]) -> Result<u32, &'static str> {
     }
 }
 
+/// What the driver believes it wrote, read back through the same memory the device is supposed to read. A ring that the
+/// device ignores and a ring the driver mis-wrote look identical from outside: both are a timeout. These numbers
+/// separate them, and they cost one line of console rather than another hypothesis.
+pub fn ring_snapshot() -> (u64, u32, u16, u16, u16, u16, u16) {
+    unsafe {
+        let rings = &raw const RINGS as *const u8;
+        let desc = rings;
+        let addr = core::ptr::read_volatile(desc as *const u64);
+        let len = core::ptr::read_volatile((desc as *const u32).add(2));
+        let flags = core::ptr::read_volatile((desc as *const u16).add(6));
+        let avail = rings.add(AVAIL_OFF);
+        let aflags = core::ptr::read_volatile(avail as *const u16);
+        let aidx = core::ptr::read_volatile((avail as *const u16).add(1));
+        let aring0 = core::ptr::read_volatile((avail as *const u16).add(2));
+        (addr, len, flags, aflags, aidx, aring0, len as u16)
+    }
+}
+
 /// Build an Ethernet + ARP request: "who has 10.0.2.2? tell 10.0.2.15". A frame a host-side capture cannot mistake for
 /// noise, and one that needs no protocol stack above it.
 pub fn arp_request(mac: [u8; 6]) -> ([u8; 42], usize) {
