@@ -31,7 +31,10 @@ ELF="$WORK/target/aarch64-unknown-none/release/morph-core"
 LOG="$WORK/serial.log"
 mkdir -p "$WORK"
 rm -f "$LOG"
-timeout "${PREEMPT_TIMEOUT:-25}" qemu-system-aarch64 \
+# The claim is "both tasks ran", not "task A finished within a fixed wall-clock". Under node load the emulated
+# CPU runs slower and a 200,000-iteration loop with a 1 ms tick and console can take far more than 25 s of wall clock
+# for the same CPU work. The window is wide, because a slow-but-correct boot is a pass and only a hung boot is a fail.
+timeout "${PREEMPT_TIMEOUT:-90}" qemu-system-aarch64 \
     -M virt -cpu cortex-a76 -m 256M \
     -kernel "$ELF" \
     -nographic -monitor none -serial stdio \
