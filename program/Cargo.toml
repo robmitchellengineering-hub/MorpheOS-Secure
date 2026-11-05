@@ -23,6 +23,9 @@ rtp-mutant-wrong-ssrc = []
 # The self-check mutation: report one fewer test passed than actually did, so
 # the gate's "6/6 RTP self-checks passed" check must go red.
 selfcheck-mutant-wrong-count = []
+# The engine mutation: emit the mix engine's output under a wrong SSRC, so the
+# gate's engine check (SSRC 0x0000000B) must go red.
+engine-mutant-wrong-ssrc = []
 
 [profile.release]
 panic = "abort"

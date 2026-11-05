@@ -12,6 +12,10 @@ use rob_core::rtp::{
     self, RobCore, RtpHeader, DEFAULT_ROB_EXT_ID, MODE_BIT_EXACT, MODE_REDUNDANCY, MODE_TEST,
     ROB_VERSION,
 };
+use rob_engine::{Engine, EngineConfig, InputFlow, OutputFlow};
+use rob_matrix::{MatrixConfig, Node};
+use rob_node::flow::{FlowFormat, Protection};
+use rob_node::packetize::Packetizer;
 
 /// The program's heap, backed by the Core's own first-fit arena: `alloc` (5) and
 /// `dealloc` (6) hand a block over and take it back. The arena is the Core's;
@@ -213,10 +217,101 @@ fn run_self_checks() -> usize {
     }
 }
 
+/// One millisecond in the Core's clock (ns), and the engine's period in frames.
+const MS: u64 = 1_000_000;
+const P: i64 = 96;
+
+/// The mix engine's output flow SSRC — distinct from the self-check packet's
+/// 0xC0FFEE00, so the capture can attribute this RTP to the engine. The
+/// mutation makes the stream unattributable, exactly what the gate's engine
+/// check must catch.
+const ENGINE_OUT_SSRC: u32 = if cfg!(feature = "engine-mutant-wrong-ssrc") {
+    0
+} else {
+    0x0000_000B
+};
+
+/// Send a packet the engine produced through the Core's `send_rtp` syscall.
+fn send_rtp_bytes(bytes: &[u8]) {
+    unsafe {
+        asm!(
+            "svc #0",
+            inout("x0") 4u64 => _,
+            in("x1") bytes.as_ptr() as u64,
+            in("x2") bytes.len() as u64,
+            options(nostack)
+        );
+    }
+}
+
+/// Instantiate a minimal mix engine (one stereo input, one stereo output,
+/// passthrough routing), feed it four synthesized periods, and send every mixed
+/// output packet out through `send_rtp`. Returns the number of packets the
+/// engine produced.
+fn run_engine() -> usize {
+    let fmt = FlowFormat::new(Protection::Duplicate);
+    let mut inputs = Vec::new();
+    inputs.push(InputFlow {
+        ssrc: 0xA,
+        channels: [0, 1],
+        pre_channels: [0, 1],
+    });
+    let mut outputs = Vec::new();
+    outputs.push(OutputFlow {
+        ssrc: ENGINE_OUT_SSRC,
+        correction_ssrc: 0xC,
+        channels: [0, 1],
+    });
+    let cfg = EngineConfig {
+        fmt,
+        inputs,
+        outputs,
+        mix_delay_ns: 3 * MS,
+        latency_ns: 40 * MS,
+        payload_type: 97,
+        ext_id: 1,
+        jitter_periods: 64,
+        repeat_corrections: false,
+        sender_clock_inputs: false,
+    };
+    let mut eng = Engine::new(cfg, MatrixConfig::new(2, 2));
+    {
+        let m = eng.matrix();
+        // Passthrough: input 0 -> output 0, input 1 -> output 1.
+        let _ = m.connect(Node::Input(0), Node::Output(0), 0.0);
+        let _ = m.connect(Node::Input(1), Node::Output(1), 0.0);
+    }
+    let mut sender = Packetizer::new(fmt, 0xA, 97, 1);
+    let mut pkt = [0u8; 1500];
+    let mut pcm = [0i32; (P * 2) as usize];
+    let mut emitted = 0usize;
+    let mut now = 100 * MS;
+    for k in 0..4i64 {
+        let first = k * P;
+        for j in 0..P as usize {
+            for c in 0..2usize {
+                // A ramp in the low bits — clearly ours, no float math needed.
+                pcm[j * 2 + c] = ((first + j as i64) * 1_000) as i32;
+            }
+        }
+        let Ok(b) = sender.build(first, &pcm, now, now + 20 * MS, 0, 0, &mut pkt) else {
+            return emitted;
+        };
+        eng.on_datagram(&pkt[..b.len], now);
+        sender.advance(first, &pcm);
+        eng.run_due(now, |bytes| {
+            send_rtp_bytes(bytes);
+            emitted += 1;
+        });
+        now += 2 * MS;
+    }
+    emitted
+}
+
 /// The entry the loader calls. It makes the four syscalls a loadable program is
 /// allowed to make, runs rob-core's six RTP tests as no_std self-checks, puts
 /// the pass count in the RTP payload, sends its own AMT/ROB-shaped RTP packet
-/// (built with `rtp::write_header`), and returns 66.
+/// (built with `rtp::write_header`), runs the mix engine, and returns 66.
 #[unsafe(no_mangle)]
 pub extern "C" fn _start() -> u64 {
     unsafe {
@@ -276,6 +371,11 @@ pub extern "C" fn _start() -> u64 {
             in("x2") len as u64,
             options(nostack)
         );
+
+        // The mix engine itself: instantiate, feed four periods, mix, and send
+        // every output packet through send_rtp. The gate reads the engine's
+        // output SSRC off the capture.
+        let _mixed = run_engine();
     }
     66
 }
