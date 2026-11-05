@@ -276,9 +276,19 @@ vectors:
 fault_entry:
     SAVE_ALL
     mrs x0, esr_el1
+    /* An SVC (EC 0x15) is a CALL, not a fault: route it to svc_handler with the frame pointer. Measured: this block and
+       the FAULT_ENTRY macro were two copies, and the macro edit went to dead code — this is the real handler. */
+    lsr x3, x0, #26
+    cmp x3, #0x15
+    b.eq 1f
     mrs x1, far_el1
     mrs x2, elr_el1
     bl  exc_report
+    b   2f
+1:
+    mov x0, sp
+    bl  svc_handler
+2:
     RESTORE_ALL
     eret
 
@@ -912,7 +922,6 @@ fn ab_demo(uart: &Uart) {
 /// The syscall dispatcher. The loaded program traps here via `svc`; x0 in the frame is the syscall number, and the
 /// result is written back into the saved x0 so RESTORE_ALL hands it to the caller. This is the API surface: the first
 /// call is `report` (0), which proves a loaded program can ask the Core for a service and read the answer.
-#[used]
 #[unsafe(no_mangle)]
 pub extern "C" fn svc_handler(frame: *mut u64) {
     unsafe {
