@@ -462,6 +462,27 @@ fn fdt_demo(uart: &Uart) {
                 if device == 1 && found.is_none() {
                     found = Some(window);
                 }
+                // STORAGE. A virtio-blk device (device id 2) reports its capacity in the config space at 0x100, readable
+                // BEFORE any queue is set up — the first fact a disk driver needs, and the smallest honest storage claim.
+                if device == 2 {
+                    // SAFETY: inside the window the firmware described.
+                    let (cap_lo, cap_hi) = unsafe {
+                        (
+                            core::ptr::read_volatile((window + 0x100) as *const u32),
+                            core::ptr::read_volatile((window + 0x104) as *const u32),
+                        )
+                    };
+                    let capacity = ((cap_hi as u64) << 32) | cap_lo as u64;
+                    let mut l = uart::LineBuf::new();
+                    l.push_str("BLK: block device at ");
+                    l.push_hex(window as u64);
+                    l.push_str(" — capacity ");
+                    l.push_u64(capacity);
+                    l.push_str(" sectors (");
+                    l.push_u64(capacity * 512 / (1024 * 1024));
+                    l.push_str(" MiB)");
+                    l.flush(uart);
+                }
             }
             match found {
                 Some(w) => {
