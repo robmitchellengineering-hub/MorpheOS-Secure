@@ -65,6 +65,36 @@ static LOADED_CODE: [u32; 2] = [0xD280_0840, 0xD65F_03C0]; // mov x0,#0x42; ret 
 #[unsafe(link_section = ".text")]
 static mut LOAD_BUF: [u8; 8] = [0u8; 8];
 
+/// The loaded program's entry point — discovered early, executed LAST, after the network and the scheduler's second task
+/// are live, so its syscalls have subjects. Load early, execute late.
+static ELF_ENTRY: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
+/// The network device base and the two MACs, threaded out of the network demo so a loaded program's send_udp can use them.
+static NET_BASE: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
+static OUR_MAC: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
+static GW_MAC: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
+
+fn mac_pack(m: [u8; 6]) -> u64 {
+    (m[0] as u64) << 40 | (m[1] as u64) << 32 | (m[2] as u64) << 24 | (m[3] as u64) << 16 | (m[4] as u64) << 8 | m[5] as u64
+}
+fn mac_unpack(v: u64) -> [u8; 6] {
+    [(v >> 40) as u8, (v >> 32) as u8, (v >> 24) as u8, (v >> 16) as u8, (v >> 8) as u8, v as u8]
+}
+
+/// Run the loaded program, once, at the end of the boot — after the network and the scheduler's second task are live,
+/// so its syscalls have subjects. Called from every boot path that reaches the epilogue.
+fn execute_loaded(uart: &Uart) {
+    let entry = ELF_ENTRY.load(core::sync::atomic::Ordering::Relaxed);
+    if entry != 0 {
+        // SAFETY: the entry points at a placed ELF segment in free RAM, position-independent, and returns via ret.
+        let loaded: unsafe extern "C" fn() -> u64 = unsafe { core::mem::transmute(entry as *const ()) };
+        let r = unsafe { loaded() };
+        let mut l = uart::LineBuf::new();
+        l.push_str("ELF: executed the loaded program, it returned ");
+        l.push_u64(r);
+        l.flush(uart);
+    }
+}
+
 /// The mutation returns 0 instead of 66, so the gate can fail when the loaded code is wrong.
 #[cfg(feature = "load-mutant-wrong-result")]
 #[unsafe(link_section = ".text")]
@@ -561,13 +591,11 @@ fn fdt_demo(uart: &Uart) {
                                         if let Ok(0) = blk::read_sector(&blk, 4, &mut elfbuf) {
                                             match elf::load(&elfbuf) {
                                                 Some(entry) => {
-                                                    let loaded: unsafe extern "C" fn() -> u64 = unsafe { core::mem::transmute(entry as *const ()) };
-                                                    let r = unsafe { loaded() };
+                                                    ELF_ENTRY.store(entry, core::sync::atomic::Ordering::Relaxed);
                                                     let mut l = uart::LineBuf::new();
                                                     l.push_str("ELF: loaded a compiled program, entry ");
                                                     l.push_hex(entry);
-                                                    l.push_str(", it returned ");
-                                                    l.push_u64(r);
+                                                    l.push_str(" — it runs after the network and scheduler are up");
                                                     l.flush(&uart);
                                                 }
                                                 None => uart.write_line("ELF: the program could not be loaded"),
@@ -746,6 +774,11 @@ fn fdt_demo(uart: &Uart) {
                                                             }
                                                                     // RUNG 1 OF THE NEXT CHUNK. An echo request from the gateway, answered with a reply the Core computes —
                                                                     // checksums and all. slirp cannot ping us, so the request is synthesized from the gateway's real MAC.
+                                                                    // THE SYSCALLS' NETWORK. Thread the device and the two MACs out of the demo, so a loaded program's send_udp
+                                                                    // (executed LATER) can reach them.
+                                                                    NET_BASE.store(dev.base as u64, core::sync::atomic::Ordering::Relaxed);
+                                                                    OUR_MAC.store(mac_pack(mac), core::sync::atomic::Ordering::Relaxed);
+                                                                    GW_MAC.store(mac_pack(r.src_mac), core::sync::atomic::Ordering::Relaxed);
                                                                     let (echo_req, echo_req_len) = ip::echo_request_from(r.src_mac, ip::GATEWAY_IP, mac);
                                                                     let (echo_reply, echo_reply_len) = ip::echo_reply(&echo_req[..echo_req_len], mac);
                                                                     match net::transmit(&dev, &echo_reply[..echo_reply_len]) {
@@ -867,6 +900,9 @@ else {
         Err(_) => uart.write_line("FDT: FAIL no arm,pl011 node was found in the tree"),
     }
 
+    // The loaded program runs here, at the end of the device-tree demo — after the network is up (queue started, gateway
+    // MAC learned) and BEFORE the isolation demo switches page tables. Its syscalls (send_udp) have subjects.
+    execute_loaded(uart);
 }
 
 /// M0c's demonstration: the boot decision exercised through the five states that matter, printed so a person can read
@@ -957,6 +993,35 @@ pub extern "C" fn svc_handler(frame: *mut u64) {
                     Err(_) => {
                         uart.write_line("SVC: the certificate was refused");
                         u64::MAX
+                    }
+                }
+            }
+            3 => {
+                // send_udp: compose a UDP datagram and put it on the wire. The device base and the gateway MAC were
+                // threaded out of the network demo; the queue is already started, so the transmit continues the monotonic
+                // descriptor sequence.
+                let base = NET_BASE.load(core::sync::atomic::Ordering::Relaxed) as usize;
+                if base == 0 {
+                    uart.write_line("SVC: no network device — send_udp refused");
+                    u64::MAX
+                } else {
+                    let mac = mac_unpack(OUR_MAC.load(core::sync::atomic::Ordering::Relaxed));
+                    let gw = mac_unpack(GW_MAC.load(core::sync::atomic::Ordering::Relaxed));
+                    let dev = net::Device { base, mac, queue_num: 0 };
+                    let (frame, len) = udp::datagram(mac, ip::OUR_IP, gw, ip::GATEWAY_IP, 9000, 9999, b"MORPHEOS-SVC");
+                    match net::transmit(&dev, &frame[..len]) {
+                        Ok(n) => {
+                            let mut l = crate::uart::LineBuf::new();
+                            l.push_str("SVC: sent a UDP datagram of ");
+                            l.push_u64(n as u64);
+                            l.push_str(" bytes");
+                            l.flush(&uart);
+                            n as u64
+                        }
+                        Err(e) => {
+                            uart.write_line(e);
+                            u64::MAX
+                        }
                     }
                 }
             }
