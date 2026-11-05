@@ -1053,6 +1053,30 @@ pub extern "C" fn svc_handler(frame: *mut u64) {
                     }
                 }
             }
+            4 => {
+                // send_rtp: the engine's own RTP stream — a fixed SSRC, distinct from the demo's, so the wire can
+                // attribute this packet to the loaded program.
+                let base = NET_BASE.load(core::sync::atomic::Ordering::Relaxed) as usize;
+                if base == 0 {
+                    uart.write_line("SVC: no network device — send_rtp refused");
+                    u64::MAX
+                } else {
+                    let mac = mac_unpack(OUR_MAC.load(core::sync::atomic::Ordering::Relaxed));
+                    let gw = mac_unpack(GW_MAC.load(core::sync::atomic::Ordering::Relaxed));
+                    let dev = net::Device { base, mac, queue_num: 0 };
+                    let (frame, len) = rtp::packet(mac, ip::OUR_IP, gw, ip::GATEWAY_IP, 9000, 5004, 7, 336, 0xDEAD_BEEF);
+                    match net::transmit(&dev, &frame[..len]) {
+                        Ok(n) => {
+                            uart.write_line("SVC: sent an RTP packet (engine stream, SSRC 0xDEADBEEF)");
+                            n as u64
+                        }
+                        Err(e) => {
+                            uart.write_line(e);
+                            u64::MAX
+                        }
+                    }
+                }
+            }
             _ => u64::MAX, // unknown syscall: the caller sees an error, not a guess
         };
         core::ptr::write_volatile(frame, result);
