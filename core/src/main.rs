@@ -807,9 +807,13 @@ fn fdt_demo(uart: &Uart) {
                                                                             }
                                                                             None => uart.write_line("NET: UDP parse FAILED"),
                                                                         }
-                                                                            // RUNG 3: RTP. Eight packets, sequence 0..7, timestamp advancing 48 per packet (1 ms at 48 kHz). The claim is
+                                                                            // THE LOADED PROGRAM RUNS HERE — after the network is up (ARP learned the gateway MAC) and BEFORE the RTP
+                                                                        // floods the queue. Measured: when it ran after the RTP (frame 14), the device dropped the datagram; here it
+                                                                        // is frame 6 and reaches the wire.
+                                                                        execute_loaded(uart);
+                                                                        // RUNG 3: RTP. Eight packets, sequence 0..7, timestamp advancing 48 per packet (1 ms at 48 kHz). The claim is
                                                                             // determinism, and the gate verifies it off the wire.
-                                                                            for i in 0..4u32 {  // TEMP: 4 to test whether frame count is the send_udp trigger
+                                                                            for i in 0..8u32 {
                                                                                 let (pkt, pkt_len) = rtp::packet(mac, ip::OUR_IP, r.src_mac, ip::GATEWAY_IP, 5004, 5004, i as u16, 0x1122_3300 + i * rtp::TIMESTAMP_STEP, 0xDEAD_BEEF);
                                                                                 if let Err(e) = net::transmit(&dev, &pkt[..pkt_len]) {
                                                                                     uart.write_line(e);
@@ -899,10 +903,6 @@ else {
         }
         Err(_) => uart.write_line("FDT: FAIL no arm,pl011 node was found in the tree"),
     }
-
-    // The loaded program runs here, at the end of the device-tree demo — after the network is up (queue started, gateway
-    // MAC learned) and BEFORE the isolation demo switches page tables. Its syscalls (send_udp) have subjects.
-    execute_loaded(uart);
 }
 
 /// M0c's demonstration: the boot decision exercised through the five states that matter, printed so a person can read
@@ -1013,7 +1013,7 @@ pub extern "C" fn svc_handler(frame: *mut u64) {
                     lm.push_str(" gw mac ");
                     for b in gw { let h = b"0123456789abcdef"; lm.push_byte(h[(b>>4) as usize]); lm.push_byte(h[(b&0xf) as usize]); lm.push_str(":"); }
                     lm.flush(&uart);
-                    let (frame, len) = udp::datagram(mac, ip::OUR_IP, gw, ip::GATEWAY_IP, 9000, 9999, b"MORPHEOS");
+                    let (frame, len) = udp::datagram(mac, ip::OUR_IP, gw, ip::GATEWAY_IP, 9000, 9999, b"MORPHEOS-SVC");
                     match net::transmit(&dev, &frame[..len]) {
                         Ok(n) => {
                             let mut l = crate::uart::LineBuf::new();
