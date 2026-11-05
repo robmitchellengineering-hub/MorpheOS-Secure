@@ -78,7 +78,7 @@ impl FirstFit {
         // SAFETY: the arena is ARENA_SIZE bytes and 16-byte aligned, so a Header fits at its start, and the block that
         // follows it is `ARENA_SIZE - HEADER` bytes.
         unsafe {
-            ptr::write(header, Header { magic: FREE, size: ARENA_SIZE - HEADER, next: ptr::null_mut() });
+            ptr::write(header, Header { magic: FREE, size: ARENA_SIZE - HEADER, next: ptr::null_mut(), _pad: [0; 104] });
         }
         unsafe {
             (*st).head = header;
@@ -111,7 +111,7 @@ impl FirstFit {
                     // SAFETY: `remainder` bytes were verified to be inside this block.
                     let split = unsafe { (cursor.cast::<u8>().add(HEADER + want)).cast::<Header>() };
                     unsafe {
-                        ptr::write(split, Header { magic: FREE, size: remainder, next: node.next });
+                        ptr::write(split, Header { magic: FREE, size: remainder, next: node.next, _pad: [0; 104] });
                     }
                     node.size = want;
                     node.next = split;
