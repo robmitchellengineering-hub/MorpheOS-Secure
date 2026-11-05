@@ -62,3 +62,5 @@ udp-mutant-bad-checksum = []
 udp-mutant-ignore-length = []
 # RTP rung mutation: freeze the sequence number, so the monotonic claim breaks.
 rtp-mutant-frozen-seq = []
+# Real-LAN address for the pacland wired test: 192.168.15.42, gateway .1.
+net-lan-19216815 = []
