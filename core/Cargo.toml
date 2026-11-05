@@ -60,3 +60,5 @@ ip-mutant-bad-checksum = []
 # UDP rung mutations: a wrong checksum, and a parser that ignores the length field and reads past the datagram.
 udp-mutant-bad-checksum = []
 udp-mutant-ignore-length = []
+# RTP rung mutation: freeze the sequence number, so the monotonic claim breaks.
+rtp-mutant-frozen-seq = []

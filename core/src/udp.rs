@@ -50,8 +50,8 @@ pub fn datagram(
     src_port: u16,
     dst_port: u16,
     payload: &[u8],
-) -> ([u8; 64], usize) {
-    let mut f = [0u8; 64];
+) -> ([u8; 256], usize) {
+    let mut f = [0u8; 256];
     for i in 0..6 {
         f[i] = dst_mac[i];
         f[6 + i] = our_mac[i];
