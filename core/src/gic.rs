@@ -29,6 +29,8 @@ const GICC_IAR: usize = GICC_BASE + 0x00c;
 #[cfg(not(feature = "gic-v3"))]
 const GICC_EOIR: usize = GICC_BASE + 0x010;
 #[cfg(feature = "gic-v3")]
+const GICR_CTLR: usize = GICR_BASE + 0x000;
+#[cfg(feature = "gic-v3")]
 const GICR_WAKER: usize = GICR_BASE + 0x014;
 #[cfg(feature = "gic-v3")]
 const GICR_ISENABLER0: usize = GICR_BASE + 0x10000 + 0x100; // SGI page
@@ -70,6 +72,7 @@ pub fn init() {
         asm!("msr icc_pmr_el1, {0}", in(reg) 0xffu64, options(nostack));
         asm!("msr icc_igrpen1_el1, {0}", in(reg) 1u64, options(nostack));
         write(GICR_WAKER, 0);
+        write(GICR_CTLR, 3); // EnableGrp0 | EnableGrp1 — the redistributor must enable group 1 for the PPI
         write(GICR_IGROUPR0, 1 << TIMER_INTID); // PPI 30 into group 1, which IGRPEN1 enables
         write(GICR_ISENABLER0, 1 << TIMER_INTID);
         write(GICD_CTLR, 1);
