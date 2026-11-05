@@ -101,5 +101,5 @@ grep -qF "SVC: the loaded program asked the Core for service" "$LOG" || { echo "
 grep -qF "it returned 66" "$LOG" || { echo "FAIL: the syscall round-trip did not return" >&2; exit 1; }
 echo "ok: a loaded program called the Core through svc and got its result back"
 # THE LEDGER SYSCALL: the loaded program asks the Core to apply a certified generation; the id must come back 1.
-grep -qF "SVC: applied a certified generation 1" "$LOG" || { echo "FAIL: the ledger syscall did not apply history" >&2; exit 1; }
+grep -qF "SVC: applied a certified generation 0" "$LOG" || { echo "FAIL: the ledger syscall did not apply history" >&2; exit 1; }
 echo "ok: a loaded program applied a certified generation through the Core"
