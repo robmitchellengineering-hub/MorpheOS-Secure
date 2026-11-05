@@ -85,3 +85,6 @@ echo "ok: the UART's address was read from the firmware's device tree, and it ma
 # reads bytes it did not write, which is the difference between a driver and a printed constant.
 grep -qF "4d 4f 52 50 48 45 4f 53" "$LOG" || { echo "FAIL: sector 0 did not round-trip the MORPHEOS signature" >&2; exit 1; }
 echo "ok: the Core read sector 0 and got back the signature the disk was written with"
+# A write is only proven by the read that follows it: the Core wrote CORE-WR1 to sector 1 and read it back.
+grep -qF "BLK: wrote and read back sector 1: CORE-WR1" "$LOG" || { echo "FAIL: the sector write did not round-trip" >&2; exit 1; }
+echo "ok: the Core wrote a sector and read it back"
