@@ -16,7 +16,7 @@ WORK=${NET_WORK:-target/net}
 case "$MODE" in --self-test) WORK="$WORK/selftest" ;; *) WORK="$WORK/check" ;; esac
 case "$MODE" in check|--self-test) ;; *) echo "usage: net.sh [--self-test]" >&2; exit 2 ;; esac
 FEATURES=""
-if [ "$MODE" = "--self-test" ]; then FEATURES="--features ip-mutant-bad-checksum,udp-mutant-bad-checksum,rtp-mutant-frozen-seq"; fi
+if [ "$MODE" = "--self-test" ]; then FEATURES="--features ip-mutant-bad-checksum,udp-mutant-bad-checksum,rtp-mutant-frozen-seq,rtp-mutant-wrong-ssrc"; fi
 command -v cargo >/dev/null 2>&1 || { echo "REFUSED: no cargo here" >&2; exit 2; }
 command -v qemu-system-aarch64 >/dev/null 2>&1 || { echo "REFUSED: no qemu-system-aarch64 here" >&2; exit 2; }
 export CARGO_TARGET_DIR="$WORK/target"
@@ -271,7 +271,7 @@ PYSVC
 SVC_UDP=${SVC_UDP:-0}
 
 if [ "$MODE" = "--self-test" ]; then
-    if [ "$GOOD_ICMP" -ne 0 ] || [ "$GOOD_UDP" -ne 0 ] || [ "$SVC_UDP" -ne 0 ] || [ "$RTP_OK" -ne 0 ]; then
+    if [ "$GOOD_ICMP" -ne 0 ] || [ "$GOOD_UDP" -ne 0 ] || [ "$SVC_UDP" -ne 0 ] || [ "$RTP_OK" -ne 0 ] || [ "$ENGINE_RTP" -ne 0 ]; then
         echo "FAIL (self-test): a bad-checksum mutation still produced a valid datagram" >&2; exit 1
     fi
     echo "ok (self-test): with wrong checksums no valid reply or datagram is accepted — the check reads the arithmetic"
@@ -299,3 +299,8 @@ if [ "$RTP_OK" -eq 0 ]; then
     echo "FAIL: no RTP stream with monotonic sequence and a 48-sample step reached the wire" >&2; exit 1
 fi
 echo "ok: an RTP stream the Core emitted — sequence 0..7, timestamp step 48 — reached the wire"
+
+if [ "$ENGINE_RTP" -eq 0 ]; then
+    echo "FAIL: the loaded program's RTP stream (SSRC 0xC0FFEE00) did not reach the wire" >&2; exit 1
+fi
+echo "ok: the loaded program's RTP stream reached the wire (SSRC 0xC0FFEE00)"

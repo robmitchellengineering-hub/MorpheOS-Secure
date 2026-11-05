@@ -41,10 +41,17 @@ pub fn packet(
     rtp[5] = (timestamp >> 16) as u8;
     rtp[6] = (timestamp >> 8) as u8;
     rtp[7] = timestamp as u8;
-    rtp[8] = (ssrc >> 24) as u8;
-    rtp[9] = (ssrc >> 16) as u8;
-    rtp[10] = (ssrc >> 8) as u8;
-    rtp[11] = ssrc as u8;
+    if cfg!(feature = "rtp-mutant-wrong-ssrc") {
+        rtp[8] = 0;
+        rtp[9] = 0;
+        rtp[10] = 0;
+        rtp[11] = 0; // the mutation: the SSRC is wrong, so neither stream can be attributed
+    } else {
+        rtp[8] = (ssrc >> 24) as u8;
+        rtp[9] = (ssrc >> 16) as u8;
+        rtp[10] = (ssrc >> 8) as u8;
+        rtp[11] = ssrc as u8;
+    }
     for i in 0..PAYLOAD_BYTES {
         rtp[12 + i] = (seq as u8).wrapping_add(i as u8); // a ramp keyed to the sequence, so a frozen sequence is visible
     }
