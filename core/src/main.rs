@@ -403,6 +403,18 @@ fn fdt_demo(uart: &Uart) {
     l.push_str("FDT: the firmware's device tree is at ");
     l.push_hex(dtb as u64);
     l.flush(&uart);
+    // The network device is described the same way the console is. Asking costs one walk; assuming an address
+    // costs a memory, and this project has already paid for one of those.
+    match fdt::find_compatible(dtb, "virtio,mmio") {
+        Ok(a) => {
+            let mut l = uart::LineBuf::new();
+            l.push_str("NET: a virtio-mmio window at ");
+            l.push_hex(a.base);
+            l.push_str(" is described by the firmware");
+            l.flush(uart);
+        }
+        Err(_) => uart.write_line("NET: no virtio-mmio node in this tree"),
+    }
     match fdt::find_compatible(dtb, "arm,pl011") {
         Ok(a) => {
             let mut l = uart::LineBuf::new();
