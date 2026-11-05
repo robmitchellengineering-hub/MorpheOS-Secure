@@ -80,6 +80,21 @@ fn mac_unpack(v: u64) -> [u8; 6] {
     [(v >> 40) as u8, (v >> 32) as u8, (v >> 24) as u8, (v >> 16) as u8, (v >> 8) as u8, v as u8]
 }
 
+/// Run the loaded program, once, at the end of the boot — after the network and the scheduler's second task are live,
+/// so its syscalls have subjects. Called from every boot path that reaches the epilogue.
+fn execute_loaded(uart: &Uart) {
+    let entry = ELF_ENTRY.load(core::sync::atomic::Ordering::Relaxed);
+    if entry != 0 {
+        // SAFETY: the entry points at a placed ELF segment in free RAM, position-independent, and returns via ret.
+        let loaded: unsafe extern "C" fn() -> u64 = unsafe { core::mem::transmute(entry as *const ()) };
+        let r = unsafe { loaded() };
+        let mut l = uart::LineBuf::new();
+        l.push_str("ELF: executed the loaded program, it returned ");
+        l.push_u64(r);
+        l.flush(uart);
+    }
+}
+
 /// The mutation returns 0 instead of 66, so the gate can fail when the loaded code is wrong.
 #[cfg(feature = "load-mutant-wrong-result")]
 #[unsafe(link_section = ".text")]
@@ -388,6 +403,7 @@ extern "C" fn after_task_aborted() -> ! {
     uart.write_line("M4c: TASK ABORTED — the Core resumed on its own stack, the evidence stays, the boot continues");
     uart.write_line(DONE);
     boot_epilogue(&uart);
+    execute_loaded(&uart);
     loop {
         // SAFETY: an aborted task's continuation has nothing to return to on this rung.
         unsafe { core::arch::asm!("wfe", options(nomem, nostack)) };
@@ -1545,21 +1561,7 @@ pub extern "C" fn kmain() -> ! {
     uart.write_line(DONE);
 
     boot_epilogue(&uart);
-
-    // THE LOADED PROGRAM RUNS HERE, LAST — after the network (ARP, queue, gateway MAC) and the scheduler's second task
-    // are live, so its syscalls have subjects. Load early, execute late: the entry was discovered during the device
-    // scan and stored; only now is it called.
-    let entry = ELF_ENTRY.load(core::sync::atomic::Ordering::Relaxed);
-    if entry != 0 {
-        // SAFETY: the entry points at a placed ELF segment in free RAM, position-independent, and returns via ret.
-        let loaded: unsafe extern "C" fn() -> u64 = unsafe { core::mem::transmute(entry as *const ()) };
-        let r = unsafe { loaded() };
-        let mut l = uart::LineBuf::new();
-        l.push_str("ELF: executed the loaded program, it returned ");
-        l.push_u64(r);
-        l.flush(&uart);
-    }
-
+    execute_loaded(&uart);
     // The epilogue returns when preemption is not built in; kmain never does.
     loop {
         // SAFETY: nothing left to return to.
