@@ -81,3 +81,7 @@ fi
 grep -qF "FDT: FAIL" "$LOG" && { echo "FAIL: the Core reported its own failure" >&2; exit 1; }
 grep -qF "$AGREE" "$LOG" || { echo "FAIL: the device tree did not agree with the constant this boot uses" >&2; exit 1; }
 echo "ok: the UART's address was read from the firmware's device tree, and it matches what the boot uses"
+# STORAGE. The block device's capacity was read, and sector 0 must round-trip the signature the gate wrote: the Core
+# reads bytes it did not write, which is the difference between a driver and a printed constant.
+grep -qF "4d 4f 52 50 48 45 4f 53" "$LOG" || { echo "FAIL: sector 0 did not round-trip the MORPHEOS signature" >&2; exit 1; }
+echo "ok: the Core read sector 0 and got back the signature the disk was written with"
