@@ -87,6 +87,8 @@ pub fn init() {
         l.push_hex(core::ptr::read_volatile(GICR_ISENABLER0 as *const u32) as u64);
         l.push_str(", IGROUPR0 ");
         l.push_hex(core::ptr::read_volatile(GICR_IGROUPR0 as *const u32) as u64);
+        l.push_str(", CNTP_CTL ");
+        let ctl: u64; asm!("mrs {0}, cntp_ctl_el0", out(reg) ctl, options(nostack)); l.push_u64(ctl);
         l.flush(&uart);
     }
 }
