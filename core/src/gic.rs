@@ -53,7 +53,7 @@ pub fn init() {
         let write = |addr: usize, v: u32| core::ptr::write_volatile(addr as *mut u32, v);
         write(GICC_PMR, 0xff);
         write(GICC_CTLR, 1);
-        write(GICD_CTLR, 1);
+        write(GICD_CTLR, 1); // EnableGrp0 for SPIs
         write(GICD_IPRIORITYR + 28, 0x0000_0000);
         write(GICD_ISENABLER0, 1 << TIMER_INTID);
         let _ = core::ptr::read_volatile(GICD_ISENABLER0 as *const u32);
@@ -71,12 +71,10 @@ pub fn init() {
         asm!("isb", options(nostack));
         asm!("msr icc_pmr_el1, {0}", in(reg) 0xffu64, options(nostack));
         asm!("msr icc_igrpen0_el1, {0}", in(reg) 1u64, options(nostack));
-        asm!("msr icc_igrpen1_el1, {0}", in(reg) 1u64, options(nostack));
         write(GICR_WAKER, 0);
-        write(GICR_CTLR, 3); // EnableGrp0 | EnableGrp1 — the redistributor must enable group 1 for the PPI
-        write(GICR_IGROUPR0, 1 << TIMER_INTID); // PPI 30 into group 1, which IGRPEN1 enables
+        write(GICR_CTLR, 1); // EnableGrp0 — the timer PPI is group 0, same as the GICv2 path
         write(GICR_ISENABLER0, 1 << TIMER_INTID);
-        write(GICD_CTLR, 1);
+        write(GICD_CTLR, 1); // EnableGrp0 for SPIs
         let _ = core::ptr::read_volatile(GICR_ISENABLER0 as *const u32);
     }
 }
@@ -93,7 +91,7 @@ pub unsafe fn handle() -> u32 {
     #[cfg(feature = "gic-v3")]
     let intid = {
         let v: u64;
-        unsafe { asm!("mrs {0}, icc_iar1_el1", out(reg) v, options(nostack)) };
+        unsafe { asm!("mrs {0}, icc_iar0_el1", out(reg) v, options(nostack)) };
         (v & 0xffff_ffff) as u32 & 0x3ff
     };
 
@@ -114,6 +112,6 @@ pub unsafe fn handle() -> u32 {
     #[cfg(not(feature = "gic-v3"))]
     unsafe { core::ptr::write_volatile(GICC_EOIR as *mut u32, intid) };
     #[cfg(feature = "gic-v3")]
-    unsafe { asm!("msr icc_eoir1_el1, {0}", in(reg) intid as u64, options(nostack)) };
+    unsafe { asm!("msr icc_eoir0_el1, {0}", in(reg) intid as u64, options(nostack)) };
     intid
 }
