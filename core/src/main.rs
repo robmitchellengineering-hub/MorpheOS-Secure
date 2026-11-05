@@ -618,6 +618,7 @@ fn fdt_demo(uart: &Uart) {
                                                                             uart.write_line("NET: RTP sent 8 packets — sequence 0..7, timestamp step 48, the gate verifies both");
                                                                             // THE CORE AS A LIVE HOST. For a bounded window, answer real ICMP echo requests arriving on the wire. This is the
                                                                             // difference between a demo that composes an answer and a host that answers when a real machine pings it.
+                                                                            if cfg!(feature = "net-lan-19216815") {
                                                                             for _ping in 0..12 {
                                                                                 match net::poll_frame(&dev, 250_000_000) {
                                                                                     Some((frame, flen)) => {
@@ -642,6 +643,7 @@ fn fdt_demo(uart: &Uart) {
                                                                                     }
                                                                                     None => {}
                                                                                 }
+                                                                            }
                                                                             }
                                                         }
                                                         None => uart.write_line("NET: nothing arrived in the budget — a quiet wire is not an error"),
