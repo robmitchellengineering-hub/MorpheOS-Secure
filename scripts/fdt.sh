@@ -106,3 +106,6 @@ echo "ok: the Core wrote a sector and read it back"
 # LOADER MILESTONE 2: code read off the disk, copied into executable memory, and executed — the result must be 66.
 grep -qF "LOAD: code loaded from disk returned 66" "$LOG" || { echo "FAIL: code from the disk did not execute" >&2; exit 1; }
 echo "ok: the Core loaded foreign code off the disk and executed it"
+# ELF: the header off the disk must be a verified 64-bit little-endian AArch64 ELF before the entry point is believed.
+grep -qF "ELF: AArch64 header parsed" "$LOG" || { echo "FAIL: the ELF header was not parsed" >&2; exit 1; }
+echo "ok: the Core parsed a real ELF header off its disk"
