@@ -103,3 +103,7 @@ echo "ok: a loaded program called the Core through svc and got its result back"
 # THE LEDGER SYSCALL: the loaded program asks the Core to apply a certified generation; the id must come back 1.
 grep -qF "SVC: applied a certified generation 0" "$LOG" || { echo "FAIL: the ledger syscall did not apply history" >&2; exit 1; }
 echo "ok: a loaded program applied a certified generation through the Core"
+
+# SEND_UDP: the loaded program asks the Core to put a UDP datagram on the wire; the byte count must round-trip.
+grep -qF "SVC: sent a UDP datagram" "$LOG" || { echo "FAIL: the send_udp syscall did not put a datagram on the wire" >&2; exit 1; }
+echo "ok: a loaded program sent a UDP datagram through the Core"

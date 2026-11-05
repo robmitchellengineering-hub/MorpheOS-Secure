@@ -996,6 +996,35 @@ pub extern "C" fn svc_handler(frame: *mut u64) {
                     }
                 }
             }
+            3 => {
+                // send_udp: compose a UDP datagram and put it on the wire. The device base and the gateway MAC were
+                // threaded out of the network demo; the queue is already started, so the transmit continues the monotonic
+                // descriptor sequence.
+                let base = NET_BASE.load(core::sync::atomic::Ordering::Relaxed) as usize;
+                if base == 0 {
+                    uart.write_line("SVC: no network device — send_udp refused");
+                    u64::MAX
+                } else {
+                    let mac = mac_unpack(OUR_MAC.load(core::sync::atomic::Ordering::Relaxed));
+                    let gw = mac_unpack(GW_MAC.load(core::sync::atomic::Ordering::Relaxed));
+                    let dev = net::Device { base, mac, queue_num: 0 };
+                    let (frame, len) = udp::datagram(mac, ip::OUR_IP, gw, ip::GATEWAY_IP, 9000, 9999, b"MORPHEOS-SVC");
+                    match net::transmit(&dev, &frame[..len]) {
+                        Ok(n) => {
+                            let mut l = crate::uart::LineBuf::new();
+                            l.push_str("SVC: sent a UDP datagram of ");
+                            l.push_u64(n as u64);
+                            l.push_str(" bytes");
+                            l.flush(&uart);
+                            n as u64
+                        }
+                        Err(e) => {
+                            uart.write_line(e);
+                            u64::MAX
+                        }
+                    }
+                }
+            }
             _ => u64::MAX, // unknown syscall: the caller sees an error, not a guess
         };
         core::ptr::write_volatile(frame, result);
