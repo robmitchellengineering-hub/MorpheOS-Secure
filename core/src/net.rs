@@ -127,7 +127,11 @@ pub fn transmit(dev: &Device, frame: &[u8]) -> Result<u32, &'static str> {
         let ring_slot = (my_idx.wrapping_sub(1) as usize) % QUEUE_NUM;
         core::ptr::write_volatile((avail as *mut u16).add(2 + ring_slot), 0);
 
-        // Kick the transmit queue, then wait for the completion that matches THIS index.
+        // Kick the transmit queue, then wait for the completion that matches THIS index. The barrier is REQUIRED by
+        // the spec: the ring writes above are normal memory and the kick is device memory, and without a dmb the device
+        // may observe the kick before the descriptor. Measured: it worked by luck in the boot context and failed (len 0)
+        // from the syscall context, where the exception boundary changes the store-buffer timing.
+        core::arch::asm!("dmb st", options(nostack));
         wr(dev.base, 0x050, 1);
         let used = rings.add(USED_OFF);
         let mut spins = 0u32;
