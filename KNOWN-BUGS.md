@@ -25,31 +25,17 @@ the switch reached it
 register or on task A's stack across the switch. One of those two paths is losing it under load. Disassemble
 task_a_entry, see where `spins` is, and add a probe that prints it on each switch-back.
 
-## 2. `send_udp` — the device drops frame 14 (len 0)
+## 2.  — RESOLVED (PR #73)
 
-**Symptom (captured):**
-```
-SVC: sent a UDP datagram of 0 bytes (frame 54)
-SVC: used idx 14, id 0, len 0
-SVC: device status 0x0f          (DRIVER_OK + FEATURES_OK — healthy)
-```
+Three root causes, not one:
+1. ** is normal** for virtio-net TX — the device reads the buffer, it does not write, so the used-ring length is
+   0 on a successful transmit. It was never the failure signal.
+2. **The frame count was the trigger** — the loaded program ran after the RTP's eight packets (frame 14), which the
+   device dropped; at frame 6 (before the RTP) the datagram reaches the wire.
+3. **The capture check was corrupted** — its  had been written as literal control bytes (a NULL), making
+   net.sh a binary file and breaking the ethertype test.
 
-The loaded program's `send_udp` (frame 14, after the net demo's 13 frames) is handed to the device, the
-device **advances `used.idx` to 14** (it saw and processed the descriptor) but writes **len 0** — it
-consumed nothing. Frames 1–13 all transmit.
-
-**Ruled out (all verified, not assumed):**
-- frame: 54 bytes, correct IP/UDP lengths
-- MACs: `52:54:00:12:34:56` → `52:55:0a:00:02:02` (correct)
-- descriptor: addr=FRAME, len=64, flags 0
-- avail-ring slot: fixed (#70, was always `ring[0]`)
-- queue depth: raised 8→64 (#70), still drops
-- TX/RX ring overlap: none (`RINGS` vs `RINGS_RX`)
-- device status: DRIVER_OK, not failed
-
-**Best next move:** test on a real wire (`-netdev tap` via the pacland-rog macvtap, already set up for
-rung 4) — slirp's 14th-frame drop likely does not exist on a real NIC. The capture assertion that would
-prove it is on the `core/sendudp-capture` branch (correctly failing).
+The gate now asserts the datagram's payload (MORPHEOS-SVC) and its checksum off the wire. net and fdt both green.
 
 ## The honest status these affect
 
