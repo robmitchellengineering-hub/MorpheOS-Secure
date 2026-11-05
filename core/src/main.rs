@@ -553,6 +553,27 @@ fn fdt_demo(uart: &Uart) {
                                                             l.push_hex(r.ethertype as u64);
                                                             l.push_str(" — an inbound frame completed into our ring");
                                                             l.flush(&uart);
+                                                            // THE FIRST ANSWER. Give the reply builder a real subject — a request for our own address — and put the
+                                                            // reply on the wire. The capture then holds an ARP reply (op 2) from our MAC, which is a reply the Core
+                                                            // composed, not one it merely echoed.
+                                                            let (req, req_len) = net::arp_request_for_us();
+                                                            let (reply, reply_len) = net::arp_reply(&req[..req_len], mac);
+                                                            match net::transmit(&dev, &reply[..reply_len]) {
+                                                                Ok(_) => {
+                                                                    let mut l = uart::LineBuf::new();
+                                                                    l.push_str("NET: ARP REPLY sent — 10.0.2.15 is at our MAC, to ");
+                                                                    for (i, b) in req[6..12].iter().enumerate() {
+                                                                        if i > 0 {
+                                                                            l.push_str(":");
+                                                                        }
+                                                                        let h = b"0123456789abcdef";
+                                                                        l.push_byte(h[(*b >> 4) as usize]);
+                                                                        l.push_byte(h[(*b & 0xf) as usize]);
+                                                                    }
+                                                                    l.flush(&uart);
+                                                                }
+                                                                Err(e) => uart.write_line(e),
+                                                            }
                                                         }
                                                         None => uart.write_line("NET: nothing arrived in the budget — a quiet wire is not an error"),
                                                     }

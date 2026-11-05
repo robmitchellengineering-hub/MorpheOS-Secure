@@ -7,9 +7,8 @@
 //! WHAT IS NOT HERE: a receive path that queues into anything, a protocol stack, checksums, retries. This is the
 //! smallest honest milestone: the wire saw us.
 //!
-//! THE LAYOUT IS THE LEGACY ONE (version 1, measured): descriptor table, available ring and used ring in one contiguous
-//! region whose page frame number is written to `QueuePFN`, with `QueueAlign` set to the page size. Modern virtio puts
-//! the three rings in three addresses and needs a shared-memory handshake; that is not what this device speaks.
+//! THE LAYOUT SUPPORTS BOTH: legacy (version 1, one page frame into `QueuePFN`) and modern (version 2, three separate
+//! addresses plus `QueueReady`). Both were measured against QEMU and both behave identically once the queue is right.
 
 const DESC_SIZE: usize = 16;
 const AVAIL_OFF: usize = 0x1000;
@@ -184,6 +183,79 @@ pub fn arp_request(mac: [u8; 6]) -> ([u8; 42], usize) {
     f[41] = 2; // target protocol: 10.0.2.2, QEMU's gateway
     (f, 42)
 }
+
+/// A request addressed TO us, "who has 10.0.2.15? tell 10.0.2.2". Synthesised because slirp never asks us a question —
+/// it only answers ours. The reply builder is the logic under test; delivery is already proven, so a synthetic subject
+/// is the honest way to exercise the reply end-to-end without a peer on the wire.
+pub fn arp_request_for_us() -> ([u8; 42], usize) {
+    let mut f = [0u8; 42];
+    for i in 0..6 {
+        f[i] = 0xff; // broadcast
+        f[6 + i] = PEER_MAC[i]; // the asker
+    }
+    f[12] = 0x08;
+    f[13] = 0x06; // ARP
+    f[14] = 0x00;
+    f[15] = 0x01; // Ethernet
+    f[16] = 0x08;
+    f[17] = 0x00; // IPv4
+    f[18] = 6;
+    f[19] = 4;
+    f[20] = 0x00;
+    f[21] = 0x01; // request
+    for i in 0..6 {
+        f[22 + i] = PEER_MAC[i]; // sender hardware
+    }
+    f[28] = 10;
+    f[29] = 0;
+    f[30] = 2;
+    f[31] = 2; // sender protocol: 10.0.2.2
+    for i in 0..6 {
+        f[32 + i] = 0; // target hardware unknown
+    }
+    f[38] = 10;
+    f[39] = 0;
+    f[40] = 2;
+    f[41] = 15; // target protocol: 10.0.2.15 — us
+    (f, 42)
+}
+
+/// Build the reply to an ARP request: "10.0.2.15 is at <our MAC>", sent to whoever asked. Ethernet and ARP only — the
+/// answer is 42 bytes and there is nothing above it to get wrong.
+pub fn arp_reply(request: &[u8], mac: [u8; 6]) -> ([u8; 42], usize) {
+    let mut f = [0u8; 42];
+    for i in 0..6 {
+        f[i] = request[6 + i]; // dst = whoever asked
+        f[6 + i] = mac[i]; // src = us
+    }
+    f[12] = 0x08;
+    f[13] = 0x06;
+    f[14] = 0x00;
+    f[15] = 0x01;
+    f[16] = 0x08;
+    f[17] = 0x00;
+    f[18] = 6;
+    f[19] = 4;
+    f[20] = 0x00;
+    f[21] = 0x02; // reply
+    for i in 0..6 {
+        f[22 + i] = mac[i]; // sender hardware = us
+    }
+    f[28] = 10;
+    f[29] = 0;
+    f[30] = 2;
+    f[31] = 15; // sender protocol = us, 10.0.2.15
+    for i in 0..6 {
+        f[32 + i] = request[22 + i]; // target hardware = the asker
+    }
+    for i in 0..4 {
+        f[38 + i] = request[28 + i]; // target protocol = the asker's address
+    }
+    (f, 42)
+}
+
+/// The peer that asks us. A fixed MAC so the gate can assert the reply's destination without a real second machine.
+const PEER_MAC: [u8; 6] = [0x52, 0x54, 0x00, 0x00, 0x00, 0x01];
 
 // ----------------------------------------------------------------------------------------------------------------
 // Receive. Queue 0, its own rings, and a bounded poll: the reply to our ARP request is the first inbound packet.
