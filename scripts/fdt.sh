@@ -96,3 +96,7 @@ echo "ok: the Core parsed a real ELF header off its disk"
 grep -qF "ELF: loaded a compiled program" "$LOG" || { echo "FAIL: the compiled program did not run" >&2; exit 1; }
 grep -qF "it returned 66" "$LOG" || { echo "FAIL: the compiled program returned the wrong value" >&2; exit 1; }
 echo "ok: a compiled ELF program was placed in memory and executed, returning 66"
+# THE API SURFACE: a loaded program traps into the Core via svc and asks for a service; the result must round-trip.
+grep -qF "SVC: the loaded program asked the Core for service" "$LOG" || { echo "FAIL: the loaded program's syscall did not reach the Core" >&2; exit 1; }
+grep -qF "it returned 66" "$LOG" || { echo "FAIL: the syscall round-trip did not return" >&2; exit 1; }
+echo "ok: a loaded program called the Core through svc and got its result back"

@@ -51,8 +51,8 @@ struct.pack_into("<I", e, 68, 5)       # p_flags = R|X
 struct.pack_into("<Q", e, 72, 120)     # p_offset
 struct.pack_into("<Q", e, 80, 0x40200000)  # p_vaddr
 struct.pack_into("<Q", e, 88, 0x40200000)  # p_paddr
-struct.pack_into("<Q", e, 96, 8)       # p_filesz
-struct.pack_into("<Q", e, 104, 8)      # p_memsz
+struct.pack_into("<Q", e, 96, 16)      # p_filesz
+struct.pack_into("<Q", e, 104, 16)     # p_memsz
 struct.pack_into("<Q", e, 112, 0x1000)  # p_align
 e[120:136] = bytes([0x00, 0x00, 0x80, 0xD2, 0x01, 0x00, 0x00, 0xD4, 0x40, 0x08, 0x80, 0xD2, 0xC0, 0x03, 0x5F, 0xD6])
 disk[2048:2048 + 128] = e
