@@ -1,3 +1,6 @@
+[workspace]
+# Standalone: the loadable program is not part of the Core's workspace; it has its own target dir and linker.
+
 [package]
 name = "morph-program"
 version = "0.0.1"
