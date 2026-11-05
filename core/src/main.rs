@@ -912,6 +912,7 @@ fn ab_demo(uart: &Uart) {
 /// The syscall dispatcher. The loaded program traps here via `svc`; x0 in the frame is the syscall number, and the
 /// result is written back into the saved x0 so RESTORE_ALL hands it to the caller. This is the API surface: the first
 /// call is `report` (0), which proves a loaded program can ask the Core for a service and read the answer.
+#[used]
 #[unsafe(no_mangle)]
 pub extern "C" fn svc_handler(frame: *mut u64) {
     unsafe {
