@@ -382,6 +382,37 @@ pub fn poll_rx(dev: &Device, budget: u32) -> Option<Received> {
     }
 }
 
+/// Like `poll_rx`, but returns a COPY of the received frame (after the 10-byte virtio header). A live host needs the
+/// frame bytes — the ICMP responder echoes the id, sequence and payload back, so it must read them, not just the summary.
+pub fn poll_frame(dev: &Device, budget: u32) -> Option<([u8; 256], usize)> {
+    let _ = dev;
+    unsafe {
+        let rings = &raw const RINGS_RX as *const u8;
+        let used = rings.add(USED_OFF);
+        let mut spins = 0u32;
+        loop {
+            let idx = core::ptr::read_volatile((used as *const u16).add(1));
+            if idx != RX_LAST_SEEN {
+                RX_LAST_SEEN = idx;
+                let id = core::ptr::read_volatile((used as *const u32).add(RS_USED_ENTRY)) as usize;
+                let written = core::ptr::read_volatile((used as *const u32).add(RS_USED_ENTRY + 1)) as usize;
+                if id < RX_BUFS && written > 10 && written - 10 <= 256 {
+                    let buf = (&raw const RX_BUFFERS as *const u8).add(id * RX_BUF_LEN).add(10);
+                    let mut frame = [0u8; 256];
+                    for i in 0..written - 10 {
+                        frame[i] = core::ptr::read_volatile(buf.add(i));
+                    }
+                    return Some((frame, written - 10));
+                }
+            }
+            spins += 1;
+            if spins > budget {
+                return None;
+            }
+        }
+    }
+}
+
 // A used-ring entry is { u32 id; u32 len; } and begins 4 bytes into the used ring (after flags and idx). As u32
 // indices that is 1 and 2 — measured: with the base at 2 the driver read `len` as the descriptor id and byte 12 as the
 // length, so a completed frame looked like an impossible descriptor and was silently discarded.

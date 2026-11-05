@@ -616,6 +616,23 @@ fn fdt_demo(uart: &Uart) {
                                                                                 }
                                                                             }
                                                                             uart.write_line("NET: RTP sent 8 packets — sequence 0..7, timestamp step 48, the gate verifies both");
+                                                                            // THE CORE AS A LIVE HOST. For a bounded window, answer real ICMP echo requests arriving on the wire. This is the
+                                                                            // difference between a demo that composes an answer and a host that answers when a real machine pings it.
+                                                                            for _ping in 0..12 {
+                                                                                match net::poll_frame(&dev, 250_000_000) {
+                                                                                    Some((frame, flen)) => {
+                                                                                        let is_ip = frame[12] == 0x08 && frame[13] == 0x00;
+                                                                                        let is_icmp_echo = is_ip && flen >= 42 && frame[14 + 9] == 1 && frame[14 + 20] == 8;
+                                                                                        if is_icmp_echo {
+                                                                                            let (reply, rlen) = ip::echo_reply(&frame[..flen], mac);
+                                                                                            if net::transmit(&dev, &reply[..rlen]).is_ok() {
+                                                                                                uart.write_line("NET: answered a REAL ping — a live host, not a demo");
+                                                                                            }
+                                                                                        }
+                                                                                    }
+                                                                                    None => {}
+                                                                                }
+                                                                            }
                                                         }
                                                         None => uart.write_line("NET: nothing arrived in the budget — a quiet wire is not an error"),
                                                     }
