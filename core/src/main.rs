@@ -1441,6 +1441,13 @@ pub extern "C" fn kmain() -> ! {
     let irq_ns = clock::ns_between(irq_start, clock::now());
     // SAFETY: mask interrupts again so the rest of the boot is deterministic.
     unsafe { core::arch::asm!("msr daifset, #2", options(nostack)) };
+    {
+        let mut l = uart::LineBuf::new();
+        l.push_str("TICK: CNTP_CTL after wait = ");
+        let ctl: u64; unsafe { core::arch::asm!("mrs {0}, cntp_ctl_el0", out(reg) ctl, options(nostack)) };
+        l.push_hex(ctl);
+        l.flush(&uart);
+    }
     if arrived >= 3 {
         uart.write_str("TICK: the Core was INTERRUPTED 0x");
         uart.write_hex(arrived);
