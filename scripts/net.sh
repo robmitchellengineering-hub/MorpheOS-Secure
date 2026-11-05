@@ -93,3 +93,10 @@ if not found:
 print(f"ok: {found} ARP request(s) from {sys.argv[2]} reached the wire")
 PY
 echo "ok: a frame the Core built was captured by the host — the ring works"
+# THE OTHER DIRECTION. Speaking is half a driver; hearing is the other half, and the gateway's ARP reply is the
+# evidence that our receive queue, our device-writable descriptors and our used-ring arithmetic are right.
+grep -qF "NET: RECEIVED" "$WORK/serial.log" || {
+    echo "FAIL: nothing was received — the Core spoke but never heard an answer" >&2
+    exit 1
+}
+echo "ok: an inbound frame completed into our ring — the Core heard the network answer it"

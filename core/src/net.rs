@@ -184,3 +184,116 @@ pub fn arp_request(mac: [u8; 6]) -> ([u8; 42], usize) {
     f[41] = 2; // target protocol: 10.0.2.2, QEMU's gateway
     (f, 42)
 }
+
+// ----------------------------------------------------------------------------------------------------------------
+// Receive. Queue 0, its own rings, and a bounded poll: the reply to our ARP request is the first inbound packet.
+// ----------------------------------------------------------------------------------------------------------------
+
+const RX_BUFS: usize = 8;
+const RX_BUF_LEN: usize = 2048;
+
+#[repr(C, align(4096))]
+struct RxRings {
+    bytes: [u8; 0x3000],
+}
+
+static mut RINGS_RX: RxRings = RxRings { bytes: [0u8; 0x3000] };
+static mut RX_BUFFERS: [[u8; RX_BUF_LEN]; RX_BUFS] = [[0u8; RX_BUF_LEN]; RX_BUFS];
+static mut RX_LAST_SEEN: u16 = 0;
+
+/// Give the device eight buffers to fill. Each descriptor is DEVICE-WRITABLE (flag 2), which is the difference between
+/// a transmit ring and a receive ring: the device writes into these, the driver reads.
+pub fn start_rx(dev: &Device) -> Result<(), &'static str> {
+    unsafe {
+        wr(dev.base, 0x030, 0); // QueueSel = 0: RECEIVE, the queue that was mistaken for a transmit queue earlier
+        let max = (rd(dev.base, 0x034) as u16).min(RX_BUFS as u16);
+        if max == 0 {
+            return Err("the device offers no receive queue");
+        }
+        wr(dev.base, 0x038, max as u32);
+        wr(dev.base, 0x03c, 4096);
+        let rings = &raw mut RINGS_RX as *mut u8;
+        for i in 0..0x3000 {
+            core::ptr::write_volatile(rings.add(i), 0);
+        }
+        let desc = rings;
+        let avail = rings.add(AVAIL_OFF);
+        for i in 0..max as usize {
+            let buf = (&raw mut RX_BUFFERS as *mut u8).add(i * RX_BUF_LEN);
+            // A descriptor is 16 bytes: addr u64 at 0, len u32 at 8, flags u16 at 12, next u16 at 14. Measured: writing
+            // the address with a u64 stride of 1 put descriptor 1's address on top of descriptor 0's length, and the
+            // device answered "bogus descriptor or out of resources" - the device naming the driver's arithmetic error.
+            core::ptr::write_volatile((desc as *mut u64).add(i * 2), buf as u64);
+            core::ptr::write_volatile((desc as *mut u32).add(i * 4 + 2), RX_BUF_LEN as u32);
+            core::ptr::write_volatile((desc as *mut u16).add(i * 8 + 6), 2); // VIRTQ_DESC_F_WRITE
+            core::ptr::write_volatile((desc as *mut u16).add(i * 8 + 7), 0);
+            core::ptr::write_volatile((avail as *mut u16).add(2 + i), i as u16);
+        }
+        core::ptr::write_volatile((avail as *mut u16).add(1), max);
+        let version = rd(dev.base, 0x004);
+        if version >= 2 {
+            let d = desc as u64;
+            let a = avail as u64;
+            let u = (rings as u64) + USED_OFF as u64;
+            wr(dev.base, 0x080, d as u32);
+            wr(dev.base, 0x084, (d >> 32) as u32);
+            wr(dev.base, 0x090, a as u32);
+            wr(dev.base, 0x094, (a >> 32) as u32);
+            wr(dev.base, 0x0a0, u as u32);
+            wr(dev.base, 0x0a4, (u >> 32) as u32);
+            wr(dev.base, 0x044, 1); // QueueReady
+        } else {
+            wr(dev.base, 0x040, ((rings as usize) / 4096) as u32);
+        }
+        wr(dev.base, 0x050, 0); // kick the receive queue so the device knows the buffers are there
+        Ok(())
+    }
+}
+
+pub struct Received {
+    pub len: usize,
+    /// The frame's ethertype, after the 10-byte virtio header.
+    pub ethertype: u16,
+    /// The first bytes of the payload, so a caller can identify what arrived.
+    pub head: [u8; 4],
+}
+
+/// Poll for one inbound frame, bounded. Returns `None` if nothing arrived in the budget: a quiet network is not an
+/// error, and a boot must not hang waiting for a packet that may never come.
+pub fn poll_rx(dev: &Device, budget: u32) -> Option<Received> {
+    let _ = dev;
+    unsafe {
+        let rings = &raw const RINGS_RX as *const u8;
+        let used = rings.add(USED_OFF);
+        let mut spins = 0u32;
+        loop {
+            let idx = core::ptr::read_volatile((used as *const u16).add(1));
+            if idx != RX_LAST_SEEN {
+                RX_LAST_SEEN = idx;
+                let id = core::ptr::read_volatile((used as *const u32).add(RS_USED_ENTRY)) as usize;
+                let written = core::ptr::read_volatile((used as *const u32).add(RS_USED_ENTRY + 1)) as usize;
+                if id < RX_BUFS && written > 10 {
+                    let buf = (&raw const RX_BUFFERS as *const u8).add(id * RX_BUF_LEN);
+                    // The device's 10-byte virtio header precedes the frame, exactly as on transmit.
+                    let frame = buf.add(10);
+                    let ethertype = ((core::ptr::read_volatile(frame.add(12)) as u16) << 8)
+                        | core::ptr::read_volatile(frame.add(13)) as u16;
+                    let mut head = [0u8; 4];
+                    for i in 0..4 {
+                        head[i] = core::ptr::read_volatile(frame.add(14 + i));
+                    }
+                    return Some(Received { len: written - 10, ethertype, head });
+                }
+            }
+            spins += 1;
+            if spins > budget {
+                return None;
+            }
+        }
+    }
+}
+
+// A used-ring entry is { u32 id; u32 len; } and begins 4 bytes into the used ring (after flags and idx). As u32
+// indices that is 1 and 2 — measured: with the base at 2 the driver read `len` as the descriptor id and byte 12 as the
+// length, so a completed frame looked like an impossible descriptor and was silently discarded.
+const RS_USED_ENTRY: usize = 1;
