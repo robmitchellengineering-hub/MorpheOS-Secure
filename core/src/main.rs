@@ -31,6 +31,7 @@ mod cap;
 mod cert;
 mod clock;
 mod fdt;
+mod elf;
 mod gic;
 mod sched;
 mod ledger;
@@ -534,6 +535,23 @@ fn fdt_demo(uart: &Uart) {
                                         }
                                         _ => uart.write_line("BLK: the write returned a non-zero status"),
                                     }
+                                        // ELF, FIRST FACT. The gate wrote a minimal ELF64 header to sector 3; the Core reads it and verifies magic,
+                                        // class and machine before it believes the entry point.
+                                        let mut hdr = [0u8; 512];
+                                        if let Ok(0) = blk::read_sector(&blk, 3, &mut hdr) {
+                                            let mut header = [0u8; 64];
+                                            header.copy_from_slice(&hdr[..64]);
+                                            match elf::parse_header(&header) {
+                                                Some((183, entry)) => {
+                                                    let mut l = uart::LineBuf::new();
+                                                    l.push_str("ELF: AArch64 header parsed — entry at ");
+                                                    l.push_hex(entry);
+                                                    l.flush(&uart);
+                                                }
+                                                Some((m, _)) => { let mut l = uart::LineBuf::new(); l.push_str("ELF: REFUSED — not AArch64, e_machine "); l.push_u64(m as u64); l.flush(&uart); }
+                                                None => uart.write_line("ELF: not an ELF64 AArch64 header"),
+                                            }
+                                        }
                                         // MILESTONE 2: code from the disk, into executable memory, jumped to. The gate wrote mov x0,#0x42; ret into
                                         // sector 2; the boot reads it back into LOAD_BUF and calls it.
                                         let mut sector2 = [0u8; 512];
