@@ -65,6 +65,21 @@ static LOADED_CODE: [u32; 2] = [0xD280_0840, 0xD65F_03C0]; // mov x0,#0x42; ret 
 #[unsafe(link_section = ".text")]
 static mut LOAD_BUF: [u8; 8] = [0u8; 8];
 
+/// The loaded program's entry point — discovered early, executed LAST, after the network and the scheduler's second task
+/// are live, so its syscalls have subjects. Load early, execute late.
+static ELF_ENTRY: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
+/// The network device base and the two MACs, threaded out of the network demo so a loaded program's send_udp can use them.
+static NET_BASE: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
+static OUR_MAC: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
+static GW_MAC: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
+
+fn mac_pack(m: [u8; 6]) -> u64 {
+    (m[0] as u64) << 40 | (m[1] as u64) << 32 | (m[2] as u64) << 24 | (m[3] as u64) << 16 | (m[4] as u64) << 8 | m[5] as u64
+}
+fn mac_unpack(v: u64) -> [u8; 6] {
+    [(v >> 40) as u8, (v >> 32) as u8, (v >> 24) as u8, (v >> 16) as u8, (v >> 8) as u8, v as u8]
+}
+
 /// The mutation returns 0 instead of 66, so the gate can fail when the loaded code is wrong.
 #[cfg(feature = "load-mutant-wrong-result")]
 #[unsafe(link_section = ".text")]
@@ -561,13 +576,11 @@ fn fdt_demo(uart: &Uart) {
                                         if let Ok(0) = blk::read_sector(&blk, 4, &mut elfbuf) {
                                             match elf::load(&elfbuf) {
                                                 Some(entry) => {
-                                                    let loaded: unsafe extern "C" fn() -> u64 = unsafe { core::mem::transmute(entry as *const ()) };
-                                                    let r = unsafe { loaded() };
+                                                    ELF_ENTRY.store(entry, core::sync::atomic::Ordering::Relaxed);
                                                     let mut l = uart::LineBuf::new();
                                                     l.push_str("ELF: loaded a compiled program, entry ");
                                                     l.push_hex(entry);
-                                                    l.push_str(", it returned ");
-                                                    l.push_u64(r);
+                                                    l.push_str(" — it runs after the network and scheduler are up");
                                                     l.flush(&uart);
                                                 }
                                                 None => uart.write_line("ELF: the program could not be loaded"),
@@ -746,6 +759,11 @@ fn fdt_demo(uart: &Uart) {
                                                             }
                                                                     // RUNG 1 OF THE NEXT CHUNK. An echo request from the gateway, answered with a reply the Core computes —
                                                                     // checksums and all. slirp cannot ping us, so the request is synthesized from the gateway's real MAC.
+                                                                    // THE SYSCALLS' NETWORK. Thread the device and the two MACs out of the demo, so a loaded program's send_udp
+                                                                    // (executed LATER) can reach them.
+                                                                    NET_BASE.store(dev.base as u64, core::sync::atomic::Ordering::Relaxed);
+                                                                    OUR_MAC.store(mac_pack(mac), core::sync::atomic::Ordering::Relaxed);
+                                                                    GW_MAC.store(mac_pack(r.src_mac), core::sync::atomic::Ordering::Relaxed);
                                                                     let (echo_req, echo_req_len) = ip::echo_request_from(r.src_mac, ip::GATEWAY_IP, mac);
                                                                     let (echo_reply, echo_reply_len) = ip::echo_reply(&echo_req[..echo_req_len], mac);
                                                                     match net::transmit(&dev, &echo_reply[..echo_reply_len]) {
@@ -1527,6 +1545,21 @@ pub extern "C" fn kmain() -> ! {
     uart.write_line(DONE);
 
     boot_epilogue(&uart);
+
+    // THE LOADED PROGRAM RUNS HERE, LAST — after the network (ARP, queue, gateway MAC) and the scheduler's second task
+    // are live, so its syscalls have subjects. Load early, execute late: the entry was discovered during the device
+    // scan and stored; only now is it called.
+    let entry = ELF_ENTRY.load(core::sync::atomic::Ordering::Relaxed);
+    if entry != 0 {
+        // SAFETY: the entry points at a placed ELF segment in free RAM, position-independent, and returns via ret.
+        let loaded: unsafe extern "C" fn() -> u64 = unsafe { core::mem::transmute(entry as *const ()) };
+        let r = unsafe { loaded() };
+        let mut l = uart::LineBuf::new();
+        l.push_str("ELF: executed the loaded program, it returned ");
+        l.push_u64(r);
+        l.flush(&uart);
+    }
+
     // The epilogue returns when preemption is not built in; kmain never does.
     loop {
         // SAFETY: nothing left to return to.
