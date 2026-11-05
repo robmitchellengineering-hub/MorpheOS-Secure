@@ -18,6 +18,9 @@ static mut RINGS: Rings = Rings { bytes: [0u8; 0x3000] };
 static mut REQUEST: [u8; 16] = [0u8; 16];
 static mut DATA: [u8; 512] = [0u8; 512];
 static mut STATUS: u8 = 0;
+// ONE index for every operation on queue 0. Measured: read and write each had their own counter, so a read right after a
+// write reused index 1, the device saw no new work, and the read returned stale bytes (........). Monotonic across BOTH.
+static mut AVAIL_IDX: u16 = 0;
 
 pub struct Blk {
     pub base: usize,
@@ -62,8 +65,6 @@ pub fn start_queue(dev: &Blk) -> Result<(), &'static str> {
 /// Read one 512-byte sector. Returns the device's status byte (0 = OK).
 pub fn read_sector(dev: &Blk, sector: u64, out: &mut [u8; 512]) -> Result<u8, &'static str> {
     unsafe {
-        static mut AVAIL_IDX: u16 = 0;
-
         // Request header: type 0 (read), reserved 0, sector (little-endian u64).
         for i in 0..4 {
             core::ptr::write_volatile((core::ptr::addr_of_mut!(REQUEST) as *mut u8).add(i), 0); // type = 0 (IN/read), reserved
@@ -124,8 +125,6 @@ pub fn read_sector(dev: &Blk, sector: u64, out: &mut [u8; 512]) -> Result<u8, &'
 /// reads our bytes and writes them to the medium.
 pub fn write_sector(dev: &Blk, sector: u64, data: &[u8; 512]) -> Result<u8, &'static str> {
     unsafe {
-        static mut AVAIL_IDX: u16 = 0;
-
         for i in 0..8 {
             (core::ptr::addr_of_mut!(REQUEST) as *mut u8).add(i).write_volatile(0);
         }
