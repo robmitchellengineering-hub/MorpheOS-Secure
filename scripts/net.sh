@@ -16,7 +16,7 @@ WORK=${NET_WORK:-target/net}
 case "$MODE" in --self-test) WORK="$WORK/selftest" ;; *) WORK="$WORK/check" ;; esac
 case "$MODE" in check|--self-test) ;; *) echo "usage: net.sh [--self-test]" >&2; exit 2 ;; esac
 FEATURES=""
-if [ "$MODE" = "--self-test" ]; then FEATURES="--features ip-mutant-bad-checksum,udp-mutant-bad-checksum"; fi
+if [ "$MODE" = "--self-test" ]; then FEATURES="--features ip-mutant-bad-checksum,udp-mutant-bad-checksum,rtp-mutant-frozen-seq"; fi
 command -v cargo >/dev/null 2>&1 || { echo "REFUSED: no cargo here" >&2; exit 2; }
 command -v qemu-system-aarch64 >/dev/null 2>&1 || { echo "REFUSED: no qemu-system-aarch64 here" >&2; exit 2; }
 export CARGO_TARGET_DIR="$WORK/target"
