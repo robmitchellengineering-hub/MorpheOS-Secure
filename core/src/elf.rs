@@ -28,7 +28,7 @@ pub fn parse_header(header: &[u8; 64]) -> Option<(u16, u64)> {
 /// Parse the program headers, copy the PT_LOAD segment into its load address, and return the entry point. This is the
 /// difference between "the header is real" and "the program's code is in memory": the bytes the ELF carries are placed
 /// where the ELF says they belong, and only then is the entry point returned.
-pub fn load(buf: &[u8; 512]) -> Option<u64> {
+pub fn load(buf: &[u8]) -> Option<u64> {
     let mut header = [0u8; 64];
     header.copy_from_slice(&buf[..64]);
     let (_, entry) = parse_header(&header)?;
