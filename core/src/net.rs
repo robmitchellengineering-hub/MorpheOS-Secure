@@ -184,14 +184,14 @@ pub fn arp_request(mac: [u8; 6]) -> ([u8; 42], usize) {
     (f, 42)
 }
 
-/// A request addressed TO us, "who has 10.0.2.15? tell 10.0.2.2". Synthesised because slirp never asks us a question —
-/// it only answers ours. The reply builder is the logic under test; delivery is already proven, so a synthetic subject
-/// is the honest way to exercise the reply end-to-end without a peer on the wire.
-pub fn arp_request_for_us() -> ([u8; 42], usize) {
+/// A request addressed TO us, "who has 10.0.2.15? tell 10.0.2.2", from the given peer. The peer's MAC must exist on
+/// the wire or the emulated network drops the reply: measured, a reply to a synthesised 52:54:00:00:00:01 was composed,
+/// transmitted and completed, and never appeared in the capture, because slirp has no route to that address.
+pub fn arp_request_from(peer_mac: [u8; 6]) -> ([u8; 42], usize) {
     let mut f = [0u8; 42];
     for i in 0..6 {
         f[i] = 0xff; // broadcast
-        f[6 + i] = PEER_MAC[i]; // the asker
+        f[6 + i] = peer_mac[i]; // the asker
     }
     f[12] = 0x08;
     f[13] = 0x06; // ARP
@@ -204,7 +204,7 @@ pub fn arp_request_for_us() -> ([u8; 42], usize) {
     f[20] = 0x00;
     f[21] = 0x01; // request
     for i in 0..6 {
-        f[22 + i] = PEER_MAC[i]; // sender hardware
+        f[22 + i] = peer_mac[i]; // sender hardware
     }
     f[28] = 10;
     f[29] = 0;
@@ -254,8 +254,7 @@ pub fn arp_reply(request: &[u8], mac: [u8; 6]) -> ([u8; 42], usize) {
     (f, 42)
 }
 
-/// The peer that asks us. A fixed MAC so the gate can assert the reply's destination without a real second machine.
-const PEER_MAC: [u8; 6] = [0x52, 0x54, 0x00, 0x00, 0x00, 0x01];
+
 
 // ----------------------------------------------------------------------------------------------------------------
 // Receive. Queue 0, its own rings, and a bounded poll: the reply to our ARP request is the first inbound packet.
@@ -326,6 +325,9 @@ pub struct Received {
     pub len: usize,
     /// The frame's ethertype, after the 10-byte virtio header.
     pub ethertype: u16,
+    /// The sender's MAC, so a reply can go back to the machine that actually asked — not to a synthesised address that
+    /// the emulated network will silently drop.
+    pub src_mac: [u8; 6],
     /// The first bytes of the payload, so a caller can identify what arrived.
     pub head: [u8; 4],
 }
@@ -354,7 +356,11 @@ pub fn poll_rx(dev: &Device, budget: u32) -> Option<Received> {
                     for i in 0..4 {
                         head[i] = core::ptr::read_volatile(frame.add(14 + i));
                     }
-                    return Some(Received { len: written - 10, ethertype, head });
+                    let mut src_mac = [0u8; 6];
+                    for i in 0..6 {
+                        src_mac[i] = core::ptr::read_volatile(frame.add(6 + i));
+                    }
+                    return Some(Received { len: written - 10, ethertype, src_mac, head });
                 }
             }
             spins += 1;

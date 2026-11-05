@@ -556,7 +556,7 @@ fn fdt_demo(uart: &Uart) {
                                                             // THE FIRST ANSWER. Give the reply builder a real subject — a request for our own address — and put the
                                                             // reply on the wire. The capture then holds an ARP reply (op 2) from our MAC, which is a reply the Core
                                                             // composed, not one it merely echoed.
-                                                            let (req, req_len) = net::arp_request_for_us();
+                                                            let (req, req_len) = net::arp_request_from(r.src_mac);
                                                             let (reply, reply_len) = net::arp_reply(&req[..req_len], mac);
                                                             match net::transmit(&dev, &reply[..reply_len]) {
                                                                 Ok(_) => {
