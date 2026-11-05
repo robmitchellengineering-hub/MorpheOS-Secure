@@ -48,6 +48,7 @@ PATCH
 timeout "${NET_TIMEOUT:-40}" qemu-system-aarch64 -M virt -cpu cortex-a76 -m 256M \
     -kernel "$IMG" -nographic -monitor none -serial stdio \
     -netdev user,id=n0 -device virtio-net-device,netdev=n0 \
+    -global virtio-mmio.force-legacy=false \
     -object filter-dump,id=f0,netdev=n0,file="$PCAP" > "$WORK/serial.log" 2>&1
 
 echo "== what the Core wrote (NET lines)"
