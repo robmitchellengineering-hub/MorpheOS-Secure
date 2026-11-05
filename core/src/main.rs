@@ -35,6 +35,7 @@ mod sched;
 mod ledger;
 mod mmu;
 mod net;
+mod ip;
 mod task;
 mod uart;
 use cap::{access, CapTable, Object, ObjectId};
@@ -574,6 +575,14 @@ fn fdt_demo(uart: &Uart) {
                                                                 }
                                                                 Err(e) => uart.write_line(e),
                                                             }
+                                                                    // RUNG 1 OF THE NEXT CHUNK. An echo request from the gateway, answered with a reply the Core computes —
+                                                                    // checksums and all. slirp cannot ping us, so the request is synthesized from the gateway's real MAC.
+                                                                    let (echo_req, echo_req_len) = ip::echo_request_from(r.src_mac, ip::GATEWAY_IP, mac);
+                                                                    let (echo_reply, echo_reply_len) = ip::echo_reply(&echo_req[..echo_req_len], mac);
+                                                                    match net::transmit(&dev, &echo_reply[..echo_reply_len]) {
+                                                                        Ok(_) => uart.write_line("NET: ICMP echo reply sent — the Core answers a ping"),
+                                                                        Err(e) => uart.write_line(e),
+                                                                    }
                                                         }
                                                         None => uart.write_line("NET: nothing arrived in the budget — a quiet wire is not an error"),
                                                     }

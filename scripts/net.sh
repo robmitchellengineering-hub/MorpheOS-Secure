@@ -15,12 +15,14 @@ MODE=${1:-check}
 WORK=${NET_WORK:-target/net}
 case "$MODE" in --self-test) WORK="$WORK/selftest" ;; *) WORK="$WORK/check" ;; esac
 case "$MODE" in check|--self-test) ;; *) echo "usage: net.sh [--self-test]" >&2; exit 2 ;; esac
+FEATURES=""
+if [ "$MODE" = "--self-test" ]; then FEATURES="--features ip-mutant-bad-checksum"; fi
 command -v cargo >/dev/null 2>&1 || { echo "REFUSED: no cargo here" >&2; exit 2; }
 command -v qemu-system-aarch64 >/dev/null 2>&1 || { echo "REFUSED: no qemu-system-aarch64 here" >&2; exit 2; }
 export CARGO_TARGET_DIR="$WORK/target"
 echo "== building the Core (net)"
 # shellcheck disable=SC2086
-cargo build -q -p morph-core --target aarch64-unknown-none --release || { echo "FAIL: the Core did not build" >&2; exit 1; }
+cargo build -q -p morph-core --target aarch64-unknown-none --release $FEATURES || { echo "FAIL: the Core did not build" >&2; exit 1; }
 ELF="$WORK/target/aarch64-unknown-none/release/morph-core"
 IMG="$WORK/morph-core.img"; PCAP="$WORK/net.pcap"
 mkdir -p "$WORK"; rm -f "$IMG" "$PCAP"
@@ -117,3 +119,49 @@ grep -qF "NET: RECEIVED" "$WORK/serial.log" || {
     exit 1
 }
 echo "ok: an inbound frame completed into our ring — the Core heard the network answer it"
+
+# RUNG 1 OF THE IP CHUNK. The capture must hold an ICMP echo REPLY the Core computed — ethertype IPv4, protocol ICMP,
+# type 0, from 10.0.2.15 — with BOTH the IP header and ICMP checksums correct. A reply with a wrong checksum is not a
+# stack, it is a decoration, so the gate recomputes them on the host side.
+GOOD_ICMP=$(python3 - "$PCAP" <<'PYICMP'
+import struct, sys
+d = open(sys.argv[1], 'rb').read()
+def cksum(b):
+    s = 0
+    for i in range(0, len(b) - 1, 2):
+        s += (b[i] << 8) | b[i + 1]
+    if len(b) % 2:
+        s += b[-1] << 8
+    while s >> 16:
+        s = (s & 0xffff) + (s >> 16)
+    return (~s) & 0xffff
+off, found = 24, 0
+while off + 16 <= len(d):
+    _, _, incl, _ = struct.unpack_from('<IIII', d, off); off += 16
+    f = d[off:off + incl]; off += incl
+    if len(f) < 50 or f[12:14] != b'\x08\x00' or f[23] != 1 or f[34] != 0:
+        continue
+    if f[26:30] != bytes([10, 0, 2, 15]):
+        continue
+    ip = bytearray(f[14:34]); ip[10] = 0; ip[11] = 0
+    if f[24:26] != cksum(ip).to_bytes(2, 'big'):
+        continue
+    icmp = bytearray(f[34:50]); icmp[2] = 0; icmp[3] = 0
+    if f[36:38] != cksum(icmp).to_bytes(2, 'big'):
+        continue
+    found += 1
+print(found)
+PYICMP
+)
+GOOD_ICMP=${GOOD_ICMP:-0}
+if [ "$MODE" = "--self-test" ]; then
+    if [ "$GOOD_ICMP" -ne 0 ]; then
+        echo "FAIL (self-test): the bad-checksum mutation still produced a valid reply" >&2; exit 1
+    fi
+    echo "ok (self-test): with a wrong checksum no valid reply is accepted, so the check reads the arithmetic"
+    exit 0
+fi
+if [ "$GOOD_ICMP" -eq 0 ]; then
+    echo "FAIL: no ICMP echo reply with a correct checksum reached the wire" >&2; exit 1
+fi
+echo "ok: an ICMP echo reply the Core computed, with correct IP and ICMP checksums, reached the wire"
