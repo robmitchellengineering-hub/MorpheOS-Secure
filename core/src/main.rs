@@ -36,6 +36,7 @@ mod ledger;
 mod mmu;
 mod net;
 mod ip;
+mod udp;
 mod task;
 mod uart;
 use cap::{access, CapTable, Object, ObjectId};
@@ -583,6 +584,28 @@ fn fdt_demo(uart: &Uart) {
                                                                         Ok(_) => uart.write_line("NET: ICMP echo reply sent — the Core answers a ping"),
                                                                         Err(e) => uart.write_line(e),
                                                                     }
+                                                                        // RUNG 2: UDP. A datagram OUT (captured off the wire), and a parse IN — ports, length, payload. The out direction
+                                                                        // is real delivery; the in direction is real parsing against a synthesized datagram until a real peer exists.
+                                                                        let (udp_out, udp_out_len) = udp::datagram(mac, ip::OUR_IP, r.src_mac, ip::GATEWAY_IP, 9000, 9999, b"MORPHEOS");
+                                                                        match net::transmit(&dev, &udp_out[..udp_out_len]) {
+                                                                            Ok(_) => uart.write_line("NET: UDP datagram sent to 10.0.2.2:9999 — the wire decides whether it arrived"),
+                                                                            Err(e) => uart.write_line(e),
+                                                                        }
+                                                                        let (udp_in, udp_in_len) = udp::datagram(r.src_mac, ip::GATEWAY_IP, mac, ip::OUR_IP, 9999, 9000, b"reply-ok");
+                                                                        match udp::parse(&udp_in[..udp_in_len]) {
+                                                                            Some(p) => {
+                                                                                let mut l = uart::LineBuf::new();
+                                                                                l.push_str("NET: UDP parsed — src port ");
+                                                                                l.push_u64(p.src_port as u64);
+                                                                                l.push_str(", dst port ");
+                                                                                l.push_u64(p.dst_port as u64);
+                                                                                l.push_str(", payload ");
+                                                                                l.push_u64(p.payload_len as u64);
+                                                                                l.push_str(" bytes");
+                                                                                l.flush(&uart);
+                                                                            }
+                                                                            None => uart.write_line("NET: UDP parse FAILED"),
+                                                                        }
                                                         }
                                                         None => uart.write_line("NET: nothing arrived in the budget — a quiet wire is not an error"),
                                                     }

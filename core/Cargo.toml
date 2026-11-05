@@ -57,3 +57,6 @@ fdt-mutant-skip-walk = []
 ab-mutant-commit-always = []
 # IP rung's mutation: a wrong checksum, which the gate must catch.
 ip-mutant-bad-checksum = []
+# UDP rung mutations: a wrong checksum, and a parser that ignores the length field and reads past the datagram.
+udp-mutant-bad-checksum = []
+udp-mutant-ignore-length = []
