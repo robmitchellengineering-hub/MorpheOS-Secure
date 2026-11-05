@@ -56,8 +56,14 @@ pub static mut DTB_POINTER: usize = 0;
 /// Milestone 1 of the loader: a foreign function, as raw AArch64 bytes, in the executable text section. It is
 /// `mov x0, #0x42; ret` — returns 66 and nothing else, so the only way the boot prints 66 is that the CPU ran these
 /// bytes. No absolute addresses, no UART access: position-independent by construction.
+#[cfg(not(feature = "load-mutant-wrong-result"))]
 #[unsafe(link_section = ".text")]
-static LOADED_CODE: [u32; 2] = [0xD280_0840, 0xD65F_03C0];
+static LOADED_CODE: [u32; 2] = [0xD280_0840, 0xD65F_03C0]; // mov x0,#0x42; ret -> 66
+
+/// The mutation returns 0 instead of 66, so the gate can fail when the loaded code is wrong.
+#[cfg(feature = "load-mutant-wrong-result")]
+#[unsafe(link_section = ".text")]
+static LOADED_CODE: [u32; 2] = [0xD280_0000, 0xD65F_03C0]; // mov x0,#0; ret -> 0
 
 pub const BANNER: &str = "MORPHEOS-CORE 0.0.1: the Core is running on aarch64; no Linux, no syscalls, no processes";
 pub const DONE: &str = "MORPHEOS-CORE: reported; halting";
