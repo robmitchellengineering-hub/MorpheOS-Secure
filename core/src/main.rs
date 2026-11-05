@@ -25,6 +25,7 @@ extern crate alloc;
 #[path = "alloc.rs"]
 mod heap;
 mod box_admission;
+mod blk;
 mod ab;
 mod cap;
 mod cert;
