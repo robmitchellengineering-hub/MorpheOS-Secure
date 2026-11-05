@@ -205,6 +205,8 @@ while off + 16 <= len(d):
     _, _, incl, _ = struct.unpack_from('<IIII', d, off); off += 16
     f = d[off:off + incl]; off += incl
     if len(f) >= 54 and f[12:14] == b'\x08\x00' and f[23] == 17 and f[42] == 0x80:
+        if f[50:54] != bytes([0xDE, 0xAD, 0xBE, 0xEF]):
+            continue  # the demo stream only; the engine uses a different SSRC
         seq = (f[44] << 8) | f[45]
         ts = (f[46] << 24) | (f[47] << 16) | (f[48] << 8) | f[49]
         pkts.append((seq, ts))
@@ -224,7 +226,7 @@ off, found = 24, 0
 while off + 16 <= len(d):
     _, _, incl, _ = struct.unpack_from('<IIII', d, off); off += 16
     f = d[off:off + incl]; off += incl
-    if len(f) >= 54 and f[12:14] == b' ' and f[23] == 17 and f[50:54] == bytes([0xDE, 0xAD, 0xBE, 0xEF]):
+    if len(f) >= 54 and f[12:14] == b' ' and f[23] == 17 and f[50:54] == bytes([0xC0, 0xFF, 0xEE, 0x00]):
         found += 1
 print(found)
 PYENG

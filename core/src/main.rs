@@ -1064,7 +1064,7 @@ pub extern "C" fn svc_handler(frame: *mut u64) {
                     let mac = mac_unpack(OUR_MAC.load(core::sync::atomic::Ordering::Relaxed));
                     let gw = mac_unpack(GW_MAC.load(core::sync::atomic::Ordering::Relaxed));
                     let dev = net::Device { base, mac, queue_num: 0 };
-                    let (frame, len) = rtp::packet(mac, ip::OUR_IP, gw, ip::GATEWAY_IP, 9000, 5004, 7, 336, 0xDEAD_BEEF);
+                    let (frame, len) = rtp::packet(mac, ip::OUR_IP, gw, ip::GATEWAY_IP, 9000, 5004, 100, 4800, 0xC0FF_EE00);
                     match net::transmit(&dev, &frame[..len]) {
                         Ok(n) => {
                             uart.write_line("SVC: sent an RTP packet (engine stream, SSRC 0xDEADBEEF)");
