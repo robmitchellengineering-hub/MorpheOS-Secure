@@ -33,7 +33,7 @@ struct.pack_into("<Q", h, 0x18, 0x40081000)  # e_entry
 disk[1536:1536 + 64] = h
 
 # sector 4: a full minimal ELF the loader places and calls
-e = bytearray(172)
+e = bytearray(236)
 e[0:4] = b"\x7fELF"
 e[4] = 2
 e[5] = 1
@@ -41,21 +41,26 @@ e[6] = 1
 struct.pack_into("<H", e, 0x10, 2)     # ET_EXEC
 struct.pack_into("<H", e, 0x12, 183)   # EM_AARCH64
 struct.pack_into("<I", e, 0x14, 1)
-struct.pack_into("<Q", e, 0x18, 0x40200000)  # e_entry = the code's load address (free RAM, not .text)
+struct.pack_into("<Q", e, 0x18, 0x40200000)  # e_entry
 struct.pack_into("<Q", e, 0x20, 64)    # e_phoff
 struct.pack_into("<H", e, 0x34, 64)    # e_ehsize
 struct.pack_into("<H", e, 0x36, 56)    # e_phentsize
-struct.pack_into("<H", e, 0x38, 1)     # e_phnum
-struct.pack_into("<I", e, 64, 1)       # p_type = PT_LOAD
-struct.pack_into("<I", e, 68, 5)       # p_flags = R|X
-struct.pack_into("<Q", e, 72, 120)     # p_offset
-struct.pack_into("<Q", e, 80, 0x40200000)  # p_vaddr
-struct.pack_into("<Q", e, 88, 0x40200000)  # p_paddr
-struct.pack_into("<Q", e, 96, 44)      # p_filesz
-struct.pack_into("<Q", e, 104, 44)     # p_memsz
-struct.pack_into("<Q", e, 112, 0x1000)  # p_align
-e[120:164] = bytes([0x00,0x00,0x80,0xD2, 0x01,0x00,0x00,0xD4, 0x20,0x00,0x80,0xD2, 0x41,0x08,0x80,0xD2, 0x01,0x00,0x00,0xD4, 0x40,0x00,0x80,0xD2, 0x01,0x00,0x00,0xD4, 0x60,0x00,0x80,0xD2, 0x01,0x00,0x00,0xD4, 0x40,0x08,0x80,0xD2, 0xC0,0x03,0x5F,0xD6])
-disk[2048:2048 + 172] = e
+struct.pack_into("<H", e, 0x38, 2)     # e_phnum = 2 (code + .bss)
+def ph(e, i, typ, flags, off, vaddr, filesz, memsz):
+    b = 64 + i * 56
+    struct.pack_into("<I", e, b, typ)
+    struct.pack_into("<I", e, b + 4, flags)
+    struct.pack_into("<Q", e, b + 8, off)
+    struct.pack_into("<Q", e, b + 16, vaddr)
+    struct.pack_into("<Q", e, b + 24, vaddr)
+    struct.pack_into("<Q", e, b + 32, filesz)
+    struct.pack_into("<Q", e, b + 40, memsz)
+    struct.pack_into("<Q", e, b + 48, 0x1000)
+ph(e, 0, 1, 5, 176, 0x40200000, 60, 60)   # code: R|X, at 0x40200000
+ph(e, 1, 1, 6, 236, 0x4020003c, 0, 16)    # .bss: R|W, 16 zero bytes at 0x4020003c
+# program: 4 syscalls, then x0 = 66 + .bss[0] (the loader must have zeroed .bss for the gate to see 66)
+e[176:236] = bytes([0x00,0x00,0x80,0xD2, 0x01,0x00,0x00,0xD4, 0x20,0x00,0x80,0xD2, 0x41,0x08,0x80,0xD2, 0x01,0x00,0x00,0xD4, 0x40,0x00,0x80,0xD2, 0x01,0x00,0x00,0xD4, 0x60,0x00,0x80,0xD2, 0x01,0x00,0x00,0xD4, 0x40,0x08,0x80,0xD2, 0x01,0x04,0xA8,0xD2, 0x21,0xF0,0x00,0x91, 0x22,0x00,0x40,0xB9, 0x00,0x00,0x02,0x8B, 0xC0,0x03,0x5F,0xD6])
+disk[2048:2048 + 236] = e
 
 open(path, "wb").write(bytes(disk))
 print("disk built:", len(disk), "bytes")
