@@ -536,6 +536,26 @@ fn fdt_demo(uart: &Uart) {
                                             l.push_str(" bytes");
                                             l.flush(uart);
                                             uart.write_line("NET: an ARP request went out on the wire — the host's capture decides whether it arrived");
+                                            // THE OTHER HALF OF THE DRIVER. Our ARP request should provoke a reply, and receiving it is the first inbound
+                                            // packet this Core ever takes: the receive queue, eight device-writable buffers, and a bounded poll.
+                                            match net::start_rx(&dev) {
+                                                Ok(()) => {
+                                                    uart.write_line("NET: eight receive buffers are offered to the device");
+                                                    match net::poll_rx(&dev, 50_000_000) {
+                                                        Some(r) => {
+                                                            let mut l = uart::LineBuf::new();
+                                                            l.push_str("NET: RECEIVED ");
+                                                            l.push_u64(r.len as u64);
+                                                            l.push_str(" bytes, ethertype 0x");
+                                                            l.push_hex(r.ethertype as u64);
+                                                            l.push_str(" — an inbound frame completed into our ring");
+                                                            l.flush(&uart);
+                                                        }
+                                                        None => uart.write_line("NET: nothing arrived in the budget — a quiet wire is not an error"),
+                                                    }
+                                                }
+                                                Err(e) => uart.write_line(e),
+                                            }
                                             // THE DESCRIPTOR THAT ACTUALLY WENT. A failed transmit shows the ring we meant to write; this shows the one
                                             // the device used. Measured: the captured frame began 10 bytes into our buffer, so the window is the evidence.
                                             let (d_addr, d_len, d_flags, a_flags, a_idx, a_ring0, _) = net::ring_snapshot();
