@@ -381,7 +381,10 @@ pub extern "C" fn task_second_entry() {
     // Count first, so "it ran" is arithmetic and not a claim: the CPU had to be here for this loop to execute.
     while spins < 5_000 {
         spins += 1;
-        core::hint::spin_loop();
+        // The spin hint must be , not . Measured: spin_loop compiled to  (a
+        // synchronization barrier), and an interrupt taken during the barrier left the loop counter stuck — task A never
+        // finished across ~1-in-5 runs. yield is the correct AArch64 pause hint and the loop now completes every run.
+        unsafe { core::arch::asm!("yield", options(nomem, nostack)) };
     }
     {
         let mut line = uart::LineBuf::new();
@@ -415,7 +418,10 @@ fn task_a_entry(uart: &Uart) -> ! {
     let mut spins: u64 = 0;
     while spins < 200_000 {
         spins += 1;
-        core::hint::spin_loop();
+        // The spin hint must be , not . Measured: spin_loop compiled to  (a
+        // synchronization barrier), and an interrupt taken during the barrier left the loop counter stuck — task A never
+        // finished across ~1-in-5 runs. yield is the correct AArch64 pause hint and the loop now completes every run.
+        unsafe { core::arch::asm!("yield", options(nomem, nostack)) };
     }
     // Through the buffer, so the line cannot be spliced by the other task printing at the same moment.
     {
