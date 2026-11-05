@@ -270,11 +270,25 @@ fn run_engine() -> usize {
         latency_ns: 40 * MS,
         payload_type: 97,
         ext_id: 1,
-        jitter_periods: 64,
+        jitter_periods: 8,
         repeat_corrections: false,
         sender_clock_inputs: false,
     };
-    let mut eng = Engine::new(cfg, MatrixConfig::new(2, 2));
+    // A minimal matrix: the Core's arena is 256 KiB, and the shipped defaults
+    // (16 384 crosspoints, a 4 096-entry queue) would not fit. Eight crosspoints
+    // and a 64-entry queue are the honest size for a one-in, one-out engine.
+    let mcfg = MatrixConfig {
+        inputs: 2,
+        outputs: 2,
+        max_buses: 2,
+        max_crosspoints: 8,
+        max_block: 256,
+        ramp_frames: 48,
+        queue: 64,
+        correction_records: 8,
+        correction_span: 256,
+    };
+    let mut eng = Engine::new(cfg, mcfg);
     {
         let m = eng.matrix();
         // Passthrough: input 0 -> output 0, input 1 -> output 1.
