@@ -14,10 +14,42 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
+MODE=${1:-check}
+case "$MODE" in check|--self-test) ;; *) echo "usage: all.sh [--self-test]" >&2; exit 2 ;; esac
+
 GATES=(m0 m1 m2 m2b mmu task isolation clock tick sched preempt prio cert cap box fdt ab net loader gic3)
 pass=0
 fail=0
 declare -a RED
+
+if [ "$MODE" = "--self-test" ]; then
+    echo "== every gate's mutation (each check must be able to fail)"
+    for gate in "${GATES[@]}"; do
+        if [ ! -x "scripts/$gate.sh" ] && [ ! -f "scripts/$gate.sh" ]; then
+            printf "%-10s %s
+" "$gate" "MISSING — the script does not exist"
+            RED+=("$gate"); fail=$((fail + 1)); continue
+        fi
+        out=$(bash "scripts/$gate.sh" --self-test 2>&1)
+        rc=$?
+        last=$(printf '%s
+' "$out" | grep -E '^(ok|FAIL)' | tail -1)
+        if [ "$rc" -eq 0 ] && [ "${last#ok}" != "$last" ]; then
+            printf "%-10s %s
+" "$gate" "green"
+            pass=$((pass + 1))
+        else
+            printf "%-10s %s
+" "$gate" "RED — ${last:-no verdict}"
+            RED+=("$gate"); fail=$((fail + 1))
+        fi
+    done
+    echo
+    echo "== self-test summary: $pass green, $fail red"
+    if [ "$fail" -ne 0 ]; then echo "red: ${RED[*]}"; exit 1; fi
+    echo "every check failed on its own mutation — the gates read their subjects"
+    exit 0
+fi
 
 echo "== every gate"
 for gate in "${GATES[@]}"; do
