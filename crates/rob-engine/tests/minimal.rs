@@ -49,8 +49,10 @@ fn minimal_engine_runs() {
     let mut pcm = [0i32; (P * 2) as usize];
     let mut emitted = 0usize;
     let mut now = 100 * MS;
-    for k in 0..4i64 {
-        let first = k * P;
+    for _ in 0..4 {
+        // Stamp the input at the sender's period index, so the mix has data
+        // (the same timing program/run_engine uses).
+        let first = (now / (2 * MS)) as i64 * P - P;
         for j in 0..P as usize {
             for c in 0..2usize {
                 pcm[j * 2 + c] = ((first + j as i64) * 1_000) as i32;
