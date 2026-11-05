@@ -25,6 +25,7 @@ extern crate alloc;
 #[path = "alloc.rs"]
 mod heap;
 mod box_admission;
+mod blk;
 mod ab;
 mod cap;
 mod cert;
@@ -481,6 +482,29 @@ fn fdt_demo(uart: &Uart) {
                     l.push_str(" sectors (");
                     l.push_u64(capacity * 512 / (1024 * 1024));
                     l.push_str(" MiB)");
+                    // THE FIRST READ. A sector read is a 3-descriptor chain; the result must round-trip from the disk the gate wrote.
+                    let blk = blk::Blk { base: window };
+                    match blk::start_queue(&blk) {
+                        Ok(()) => {
+                            let mut sector = [0u8; 512];
+                            match blk::read_sector(&blk, 0, &mut sector) {
+                                Ok(0) => {
+                                    let mut l = uart::LineBuf::new();
+                                    l.push_str("BLK: sector 0 read — first 8 bytes: ");
+                                    for (n, b) in sector[..8].iter().enumerate() {
+                                        if n > 0 { l.push_str(" "); }
+                                        let h = b"0123456789abcdef";
+                                        l.push_byte(h[(*b >> 4) as usize]);
+                                        l.push_byte(h[(*b & 0xf) as usize]);
+                                    }
+                                    l.flush(&uart);
+                                }
+                                Ok(st) => { let mut l = uart::LineBuf::new(); l.push_str("BLK: read returned status "); l.push_u64(st as u64); l.flush(&uart); }
+                                Err(e) => uart.write_line(e),
+                            }
+                        }
+                        Err(e) => uart.write_line(e),
+                    }
                     l.flush(uart);
                 }
             }
