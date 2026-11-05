@@ -92,6 +92,23 @@ if not found:
     sys.exit("FAIL: no ARP request from our MAC in the capture")
 print(f"ok: {found} ARP request(s) from {sys.argv[2]} reached the wire")
 PY
+# THE ANSWER. A reply the Core COMPOSED (op 2), not echoed: an ARP frame with our MAC as sender and op=2 in the
+# operation field. This is the difference between a driver that speaks and one that answers a question.
+python3 - "$PCAP" "$OUR_MAC" <<'PYCHECK' || exit 1
+import struct, sys
+d = open(sys.argv[1], 'rb').read()
+mac = bytes(int(b, 16) for b in sys.argv[2].split(':'))
+off, replies = 24, 0
+while off + 16 <= len(d):
+    _, _, incl, _ = struct.unpack_from('<IIII', d, off)
+    frame = d[off + 16:off + 16 + incl]
+    off += 16 + incl
+    if len(frame) >= 42 and frame[12:14] == b'\x08\x06' and frame[6:12] == mac and frame[20:22] == b'\x00\x02':
+        replies += 1
+if not replies:
+    sys.exit("FAIL: no ARP reply from our MAC in the capture")
+print("ok: " + str(replies) + " ARP reply(ies) the Core composed reached the wire")
+PYCHECK
 echo "ok: a frame the Core built was captured by the host — the ring works"
 # THE OTHER DIRECTION. Speaking is half a driver; hearing is the other half, and the gateway's ARP reply is the
 # evidence that our receive queue, our device-writable descriptors and our used-ring arithmetic are right.
