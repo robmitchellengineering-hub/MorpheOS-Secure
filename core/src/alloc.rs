@@ -20,7 +20,7 @@ use core::ptr;
 
 /// The arena. 256 KiB is enough for the Core's own objects on this rung and small enough to be a decision rather than
 /// a default: growing it is a deliberate change, because memory the Core hands out is memory the Core owns.
-const ARENA_SIZE: usize = 768 * 1024;
+const ARENA_SIZE: usize = 960 * 1024;
 
 #[repr(align(128))]
 struct Arena([u8; ARENA_SIZE]);
