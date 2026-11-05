@@ -65,9 +65,6 @@ static LOADED_CODE: [u32; 2] = [0xD280_0840, 0xD65F_03C0]; // mov x0,#0x42; ret 
 #[unsafe(link_section = ".text")]
 static mut LOAD_BUF: [u8; 8] = [0u8; 8];
 
-/// The ledger a loaded program writes through the syscall — the same machine the ledger rung proves, now reachable by call.
-static mut LEDGER: Option<Ledger> = None;
-
 /// The mutation returns 0 instead of 66, so the gate can fail when the loaded code is wrong.
 #[cfg(feature = "load-mutant-wrong-result")]
 #[unsafe(link_section = ".text")]
@@ -948,10 +945,8 @@ pub extern "C" fn svc_handler(frame: *mut u64) {
                     len: 3,
                     claimed_ppm: 350_000,
                 };
-                if LEDGER.is_none() {
-                    LEDGER = Some(Ledger::empty());
-                }
-                match LEDGER.as_mut().unwrap().apply_certified(arg0, &cert) {
+                let mut ledger = Ledger::empty();
+                match ledger.apply_certified(arg0, &cert) {
                     Ok((id, _ppm)) => {
                         let mut l = crate::uart::LineBuf::new();
                         l.push_str("SVC: applied a certified generation ");
