@@ -92,3 +92,7 @@ echo "ok: the Core loaded foreign code off the disk and executed it"
 # ELF: the header off the disk must be a verified 64-bit little-endian AArch64 ELF before the entry point is believed.
 grep -qF "ELF: AArch64 header parsed" "$LOG" || { echo "FAIL: the ELF header was not parsed" >&2; exit 1; }
 echo "ok: the Core parsed a real ELF header off its disk"
+# ELF LOAD: a full ELF off the disk, its PT_LOAD segment placed, its entry called — and it returns 66.
+grep -qF "ELF: loaded a compiled program" "$LOG" || { echo "FAIL: the compiled program did not run" >&2; exit 1; }
+grep -qF "it returned 66" "$LOG" || { echo "FAIL: the compiled program returned the wrong value" >&2; exit 1; }
+echo "ok: a compiled ELF program was placed in memory and executed, returning 66"
