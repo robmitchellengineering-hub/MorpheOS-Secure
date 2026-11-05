@@ -62,6 +62,8 @@ udp-mutant-bad-checksum = []
 udp-mutant-ignore-length = []
 # RTP rung mutation: freeze the sequence number, so the monotonic claim breaks.
 rtp-mutant-frozen-seq = []
+# RTP rung mutation: emit a wrong SSRC, so attribution (demo vs engine) cannot be made.
+rtp-mutant-wrong-ssrc = []
 # Loader mutation: the loaded code returns the wrong value, so the gate can fail when execution is wrong.
 load-mutant-wrong-result = []
 # GICv3 (the Pi 5 GIC-600): system-register CPU interface instead of GICv2 MMIO.

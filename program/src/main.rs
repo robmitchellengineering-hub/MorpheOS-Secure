@@ -23,6 +23,8 @@ pub extern "C" fn _start() -> u64 {
         asm!("svc #0", inout("x0") 2u64 => _, options(nostack));
         // send_udp (3)
         asm!("svc #0", inout("x0") 3u64 => _, options(nostack));
+        // send_rtp (4) — the engine's own RTP stream
+        asm!("svc #0", inout("x0") 4u64 => _, options(nostack));
     }
     66
 }

@@ -16,17 +16,18 @@ WORK=${NET_WORK:-target/net}
 case "$MODE" in --self-test) WORK="$WORK/selftest" ;; *) WORK="$WORK/check" ;; esac
 case "$MODE" in check|--self-test) ;; *) echo "usage: net.sh [--self-test]" >&2; exit 2 ;; esac
 FEATURES=""
-if [ "$MODE" = "--self-test" ]; then FEATURES="--features ip-mutant-bad-checksum,udp-mutant-bad-checksum,rtp-mutant-frozen-seq"; fi
+if [ "$MODE" = "--self-test" ]; then FEATURES="--features ip-mutant-bad-checksum,udp-mutant-bad-checksum,rtp-mutant-frozen-seq,rtp-mutant-wrong-ssrc"; fi
 command -v cargo >/dev/null 2>&1 || { echo "REFUSED: no cargo here" >&2; exit 2; }
 command -v qemu-system-aarch64 >/dev/null 2>&1 || { echo "REFUSED: no qemu-system-aarch64 here" >&2; exit 2; }
 export CARGO_TARGET_DIR="$WORK/target"
 echo "== building the Core (net)"
 # shellcheck disable=SC2086
 cargo build -q -p morph-core --target aarch64-unknown-none --release $FEATURES || { echo "FAIL: the Core did not build" >&2; exit 1; }
+cargo build -q -p morph-program --target aarch64-unknown-none --release || { echo "FAIL: the program did not build" >&2; exit 1; }
 ELF="$WORK/target/aarch64-unknown-none/release/morph-core"
 IMG="$WORK/morph-core.img"; PCAP="$WORK/net.pcap"
 mkdir -p "$WORK"; rm -f "$IMG" "$PCAP"
-python3 scripts/make-disk.py "$WORK/disk.img"
+python3 scripts/make-disk.py "$WORK/disk.img" "$WORK/target/aarch64-unknown-none/release/morph-program"
 python3 - "$ELF" "$IMG" <<'PATCH'
 import struct, sys
 data = open(sys.argv[1], 'rb').read()
@@ -204,6 +205,8 @@ while off + 16 <= len(d):
     _, _, incl, _ = struct.unpack_from('<IIII', d, off); off += 16
     f = d[off:off + incl]; off += incl
     if len(f) >= 54 and f[12:14] == b'\x08\x00' and f[23] == 17 and f[42] == 0x80:
+        if f[50:54] != bytes([0xDE, 0xAD, 0xBE, 0xEF]):
+            continue  # the demo stream only; the engine uses a different SSRC
         seq = (f[44] << 8) | f[45]
         ts = (f[46] << 24) | (f[47] << 16) | (f[48] << 8) | f[49]
         pkts.append((seq, ts))
@@ -214,6 +217,21 @@ print(1 if ok else 0)
 PYRTP
 )
 RTP_OK=${RTP_OK:-0}
+
+# THE ENGINE'S RTP: the loaded program's own stream, fixed SSRC 0xDEADBEEF, distinct from the demo's 8-packet stream.
+ENGINE_RTP=$(python3 - "$PCAP" <<'PYENG'
+import struct, sys
+d = open(sys.argv[1], 'rb').read()
+off, found = 24, 0
+while off + 16 <= len(d):
+    _, _, incl, _ = struct.unpack_from('<IIII', d, off); off += 16
+    f = d[off:off + incl]; off += incl
+    if len(f) >= 54 and f[12:14] == bytes([8, 0]) and f[23] == 17 and f[50:54] == bytes([0xC0, 0xFF, 0xEE, 0x00]):
+        found += 1
+print(found)
+PYENG
+)
+ENGINE_RTP=${ENGINE_RTP:-0}
 
 # THE LOADED PROGRAM'S DATAGRAM. The API-surface rung sends a UDP datagram whose payload is MORPHEOS-SVC. It must be on
 # the wire with a CORRECT checksum — the same arithmetic the demo datagram proved, but carrying the loaded program's own
@@ -253,7 +271,7 @@ PYSVC
 SVC_UDP=${SVC_UDP:-0}
 
 if [ "$MODE" = "--self-test" ]; then
-    if [ "$GOOD_ICMP" -ne 0 ] || [ "$GOOD_UDP" -ne 0 ] || [ "$SVC_UDP" -ne 0 ] || [ "$RTP_OK" -ne 0 ]; then
+    if [ "$GOOD_ICMP" -ne 0 ] || [ "$GOOD_UDP" -ne 0 ] || [ "$SVC_UDP" -ne 0 ] || [ "$RTP_OK" -ne 0 ] || [ "$ENGINE_RTP" -ne 0 ]; then
         echo "FAIL (self-test): a bad-checksum mutation still produced a valid datagram" >&2; exit 1
     fi
     echo "ok (self-test): with wrong checksums no valid reply or datagram is accepted — the check reads the arithmetic"
@@ -281,3 +299,8 @@ if [ "$RTP_OK" -eq 0 ]; then
     echo "FAIL: no RTP stream with monotonic sequence and a 48-sample step reached the wire" >&2; exit 1
 fi
 echo "ok: an RTP stream the Core emitted — sequence 0..7, timestamp step 48 — reached the wire"
+
+if [ "$ENGINE_RTP" -eq 0 ]; then
+    echo "FAIL: the loaded program's RTP stream (SSRC 0xC0FFEE00) did not reach the wire" >&2; exit 1
+fi
+echo "ok: the loaded program's RTP stream reached the wire (SSRC 0xC0FFEE00)"
