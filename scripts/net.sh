@@ -192,8 +192,29 @@ PYUDP
 GOOD_UDP=${GOOD_UDP:-0}
 UDP_PARSED=$(grep -c "NET: UDP parsed — src port 9999" "$WORK/serial.log" || true)
 
+# RUNG 3 OF THE IP CHUNK. RTP: eight packets, sequence strictly 0..7, timestamp advancing exactly 48 per packet (1 ms
+# at 48 kHz). Determinism is the claim; the gate checks it off the wire.
+RTP_OK=$(python3 - "$PCAP" <<'PYRTP'
+import struct, sys
+d = open(sys.argv[1], 'rb').read()
+off, pkts = 24, []
+while off + 16 <= len(d):
+    _, _, incl, _ = struct.unpack_from('<IIII', d, off); off += 16
+    f = d[off:off + incl]; off += incl
+    if len(f) >= 54 and f[12:14] == b'\x08\x00' and f[23] == 17 and f[42] == 0x80:
+        seq = (f[44] << 8) | f[45]
+        ts = (f[46] << 24) | (f[47] << 16) | (f[48] << 8) | f[49]
+        pkts.append((seq, ts))
+seqs = [p[0] for p in pkts]
+steps = [pkts[i + 1][1] - pkts[i][1] for i in range(len(pkts) - 1)]
+ok = len(pkts) == 8 and seqs == list(range(8)) and all(st == 48 for st in steps)
+print(1 if ok else 0)
+PYRTP
+)
+RTP_OK=${RTP_OK:-0}
+
 if [ "$MODE" = "--self-test" ]; then
-    if [ "$GOOD_ICMP" -ne 0 ] || [ "$GOOD_UDP" -ne 0 ]; then
+    if [ "$GOOD_ICMP" -ne 0 ] || [ "$GOOD_UDP" -ne 0 ] || [ "$RTP_OK" -ne 0 ]; then
         echo "FAIL (self-test): a bad-checksum mutation still produced a valid datagram" >&2; exit 1
     fi
     echo "ok (self-test): with wrong checksums no valid reply or datagram is accepted — the check reads the arithmetic"
@@ -211,3 +232,8 @@ if [ "$UDP_PARSED" -eq 0 ]; then
     echo "FAIL: the Core did not parse an inbound datagram" >&2; exit 1
 fi
 echo "ok: the Core parsed an inbound UDP datagram — ports and length read back"
+
+if [ "$RTP_OK" -eq 0 ]; then
+    echo "FAIL: no RTP stream with monotonic sequence and a 48-sample step reached the wire" >&2; exit 1
+fi
+echo "ok: an RTP stream the Core emitted — sequence 0..7, timestamp step 48 — reached the wire"
