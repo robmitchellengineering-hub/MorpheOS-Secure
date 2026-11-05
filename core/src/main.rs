@@ -1138,9 +1138,28 @@ pub extern "C" fn svc_handler(frame: *mut u64) {
                 } else {
                     let p = ALLOCATOR.alloc_block(size);
                     if p.is_null() {
-                        uart.write_line("SVC: alloc refused — the arena has no block that fits");
+                        let (used, frees, _) = ALLOCATOR.stats();
+                        let mut l = crate::uart::LineBuf::new();
+                        l.push_str("SVC: alloc refused — no block fits, size ");
+                        l.push_u64(size as u64);
+                        l.push_str(" used ");
+                        l.push_u64(used as u64);
+                        l.push_str(" frees ");
+                        l.push_u64(frees as u64);
+                        l.flush(&uart);
                         0
                     } else {
+                        // Debug: every allocation, so a hang in the engine's
+                        // constructor can be pinned to the last request.
+                        static N: core::sync::atomic::AtomicU64 =
+                            core::sync::atomic::AtomicU64::new(0);
+                        let n = N.fetch_add(1, core::sync::atomic::Ordering::Relaxed) + 1;
+                        let mut l = crate::uart::LineBuf::new();
+                        l.push_str("SVC: alloc #");
+                        l.push_u64(n);
+                        l.push_str(" size ");
+                        l.push_u64(size as u64);
+                        l.flush(&uart);
                         p as u64
                     }
                 }
