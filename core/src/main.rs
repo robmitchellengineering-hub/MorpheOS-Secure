@@ -432,14 +432,17 @@ fn fdt_demo(uart: &Uart) {
         if let Ok(a) = fdt::find_compatible(dtb, "virtio,mmio") {
             let base = a.base as usize;
             let mut found: Option<usize> = None;
-            for slot in 0..8usize {
+            // QEMU's virt places its virtio-mmio transports across the whole window range and may attach a device to a
+            // late one — measured: with eight slots scanned and a NIC passed on the command line, every window still
+            // reported nothing. So the scan covers the full transport count and prints only windows that hold a device.
+            for slot in 0..32usize {
                 let window = base + slot * 0x200;
                 // SAFETY: inside the window the firmware described; a fault here is the measurement.
                 let (magic, version, device) = unsafe {
                     let w = |off: usize| core::ptr::read_volatile((window + off) as *const u32);
                     (w(0x000), w(0x004), w(0x008))
                 };
-                if magic != 0x7472_6976 {
+                if magic != 0x7472_6976 || device == 0 {
                     continue;
                 }
                 let mut l = uart::LineBuf::new();
