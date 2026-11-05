@@ -48,3 +48,39 @@ who is live and the ledger to make the switch a generation, not a guess.
 - **No DHCP or DNS.** Addresses are stated in the ledger.
 - **No TLS.** Integrity and authority are the capability and certificate machinery, not a handshake bolted on.
 - **No IPv6 until the show works.** It doubles the code and adds nothing to a wired desk.
+
+## MEASURED STATE, 2026-11-04 — step 1 is discovery, and it corrected two assumptions
+
+The Core now asks the firmware where the network is, and the answers were not what the plan assumed:
+
+```
+NET: a virtio-mmio window at 0xa000000 is described by the firmware
+NET: header magic 0x74726976  version 1  device id 0
+NET: the window is reachable but is not a modern virtio-net
+```
+
+Three facts, each earned in one boot:
+
+1. **The window is readable.** The page tables already reach `0xa000000`, so no MMU work is needed before a driver —
+   the first thing the plan would otherwise have got wrong.
+2. **It is the LEGACY interface (version 1), not modern (version 2).** The register layout differs and
+   `GuestPageSize` is part of the bring-up. Code written against version 2 would have been wrong in a way that fails
+   quietly.
+3. **The first window is an EMPTY SLOT** (`device id 0`). The tree's first `virtio,mmio` node holds nothing, so the
+   driver's first job is **enumeration** — pick the window whose `device id` is 1 (net) — and not setup.
+
+**Also open:** an `EXCEPTION` follows that boot, after the probe, and it is not yet attributed. The Core reported it
+rather than stopping (which is the fault rung working), but no driver code should be written until it is understood —
+a fault during device probing is exactly the kind of thing that turns into a mystery three rungs later.
+
+### What this changes in the order above
+- **Step 1 gains a first half:** teach the tree walker (or a bounded scan) to find *every* `virtio-mmio` window and
+  choose by device id. The base comes from the tree; on QEMU the stride between windows is `0x200`.
+- **The register constants must be the legacy ones**, and the plan's step 1 should state that explicitly rather than
+  assuming "modern, version 2" as it originally did.
+- **The `EXCEPTION` is attributed before the ring is touched.**
+
+### The editorial lesson, recorded because it cost a round
+An edit keyed on exact surrounding text failed because a previous insertion had changed that text's indentation, and
+the script aborted before writing — the same class of failure as the line-range move that swallowed five demos. In a
+file that edits have reshaped, **anchor on a line verified in this session, or rewrite the whole block.**
