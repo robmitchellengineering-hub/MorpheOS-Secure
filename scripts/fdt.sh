@@ -61,7 +61,9 @@ PATCH
 
 timeout "${FDT_TIMEOUT:-25}" qemu-system-aarch64 -M virt -cpu cortex-a76 -m 256M \
     -kernel "$IMG" -nographic -monitor none -serial stdio \
-    -netdev user,id=n0 -device virtio-net-device,netdev=n0 -global virtio-mmio.force-legacy=false \
+    -netdev user,id=n0 -device virtio-net-device,netdev=n0 \
+    -device virtio-blk-device,drive=d0 -drive file="$WORK/disk.img",if=none,id=d0,format=raw \
+    -global virtio-mmio.force-legacy=false \
     -object filter-dump,id=f0,netdev=n0,file="$WORK/net.pcap" > "$LOG" 2>&1
 echo "== what the Core wrote (FDT lines)"
 sed -e 's/\r$//' "$LOG" | grep -E "^FDT:" | head -5
