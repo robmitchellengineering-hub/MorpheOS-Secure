@@ -1024,6 +1024,11 @@ pub extern "C" fn svc_handler(frame: *mut u64) {
                             l.push_str(")");
                             l.flush(&uart);
                             let (uidx, uid, ulen) = net::used_snapshot();
+                            let dev_status = unsafe { core::ptr::read_volatile((base + 0x070) as *const u32) };
+                            let mut ls = crate::uart::LineBuf::new(); ls.push_str("SVC: device status 0x");
+                            let h = b"0123456789abcdef";
+                            for k in (0..8).rev() { ls.push_byte(h[((dev_status >> (k*4)) & 0xf) as usize]); }
+                            ls.flush(&uart);
                             let mut l2 = crate::uart::LineBuf::new();
                             l2.push_str("SVC: used idx ");
                             l2.push_u64(uidx as u64);
