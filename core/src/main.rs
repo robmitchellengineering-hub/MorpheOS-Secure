@@ -1575,7 +1575,11 @@ pub extern "C" fn kmain() -> ! {
     uart.write_line("M2b: allocator initialised (arena handed to the free list)");
     {
         use alloc::vec::Vec;
-        let mut cue_list: Vec<u32> = Vec::new();
+        // One allocation (capacity 8), not a growing Vec: with 128-byte alignment the growth path
+        // frees a same-sized block and first-fit reuses the earlier hole, so the reuse check would
+        // compare against the wrong pointer. A single block makes "the freed block was reused"
+        // unambiguous.
+        let mut cue_list: Vec<u32> = Vec::with_capacity(8);
         for cue in 1..=8u32 {
             cue_list.push(cue * 1000);
         }
