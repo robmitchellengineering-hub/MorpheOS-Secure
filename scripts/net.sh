@@ -219,7 +219,6 @@ PYRTP
 RTP_OK=${RTP_OK:-0}
 
 # THE ENGINE'S RTP: the loaded program's own stream, fixed SSRC 0xDEADBEEF, distinct from the demo's 8-packet stream.
-echo "DBG PCAP=[$PCAP]" >&2
 ENGINE_RTP=$(python3 - "$PCAP" <<'PYENG'
 import struct, sys
 d = open(sys.argv[1], 'rb').read()
@@ -227,13 +226,12 @@ off, found = 24, 0
 while off + 16 <= len(d):
     _, _, incl, _ = struct.unpack_from('<IIII', d, off); off += 16
     f = d[off:off + incl]; off += incl
-    if len(f) >= 54 and f[12:14] == b' ' and f[23] == 17 and f[50:54] == bytes([0xC0, 0xFF, 0xEE, 0x00]):
+    if len(f) >= 54 and f[12:14] == bytes([8, 0]) and f[23] == 17 and f[50:54] == bytes([0xC0, 0xFF, 0xEE, 0x00]):
         found += 1
 print(found)
 PYENG
 )
 ENGINE_RTP=${ENGINE_RTP:-0}
-echo "DEBUG ENGINE_RTP=$ENGINE_RTP" >&2
 
 # THE LOADED PROGRAM'S DATAGRAM. The API-surface rung sends a UDP datagram whose payload is MORPHEOS-SVC. It must be on
 # the wire with a CORRECT checksum — the same arithmetic the demo datagram proved, but carrying the loaded program's own
