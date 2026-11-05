@@ -40,6 +40,10 @@ unsafe fn wr(base: usize, off: usize, value: u32) {
 /// Bring the device's queue up. `Ok` means the queue's page frame was accepted and a descriptor was offered.
 pub fn start_queue(dev: &Device) -> Result<(), &'static str> {
     unsafe {
+        // THE SELECTOR FIRST. Legacy virtio-mmio addresses every queue through QueueSel, and a queue operation against
+        // an unselected queue is undefined — measured: the queue number read back as 0, which is what "no queue
+        // selected" looks like from the driver's side.
+        wr(dev.base, 0x030, 0); // QueueSel = 0, the receive queue
         let max = (rd(dev.base, 0x034) as u16).min(8);
         if max == 0 {
             return Err("the device offers no queue");
