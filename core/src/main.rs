@@ -510,14 +510,13 @@ fn fdt_demo(uart: &Uart) {
                         ];
                         let mut l = uart::LineBuf::new();
                         l.push_str("NET: the device's MAC is ");
+                        const HEX: &[u8; 16] = b"0123456789abcdef";
                         for (i, b) in mac.iter().enumerate() {
                             if i > 0 {
                                 l.push_str(":");
                             }
-                            if *b < 0x10 {
-                                l.push_str("0");
-                            }
-                            l.push_hex(*b as u64);
+                            l.push_byte(HEX[(*b >> 4) as usize]);
+                            l.push_byte(HEX[(*b & 0xf) as usize]);
                         }
                         l.flush(uart);
                         if final_status & 0x0f == 0x0f {
