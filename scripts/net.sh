@@ -219,6 +219,7 @@ PYRTP
 RTP_OK=${RTP_OK:-0}
 
 # THE ENGINE'S RTP: the loaded program's own stream, fixed SSRC 0xDEADBEEF, distinct from the demo's 8-packet stream.
+echo "DBG PCAP=[$PCAP]" >&2
 ENGINE_RTP=$(python3 - "$PCAP" <<'PYENG'
 import struct, sys
 d = open(sys.argv[1], 'rb').read()
