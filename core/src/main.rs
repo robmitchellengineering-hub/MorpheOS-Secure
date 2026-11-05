@@ -1114,6 +1114,15 @@ pub extern "C" fn svc_handler(frame: *mut u64) {
                 // result is the payload pointer, or 0 when nothing fits — the program's #[global_allocator] maps 0 to a
                 // handle-alloc error. This is the difference between "the program has memory" and "the Core owns the
                 // memory it hands out": the arena is the Core's, and a loaded program only ever borrows from it.
+                //
+                // The loaded program runs DURING the network rung (before the M2b rung that initialises the arena), so
+                // the arena is handed to the free list on the first alloc — lazily, once — rather than assumed ready.
+                static ALLOC_READY: core::sync::atomic::AtomicBool =
+                    core::sync::atomic::AtomicBool::new(false);
+                if !ALLOC_READY.swap(true, core::sync::atomic::Ordering::Relaxed) {
+                    // SAFETY: once, on the single core, before any allocation through this path.
+                    ALLOCATOR.init();
+                }
                 let size = arg0 as usize;
                 if size == 0 || size > 256 * 1024 {
                     uart.write_line("SVC: alloc refused — the size is not a request");
