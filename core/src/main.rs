@@ -809,7 +809,7 @@ fn fdt_demo(uart: &Uart) {
                                                                         }
                                                                             // RUNG 3: RTP. Eight packets, sequence 0..7, timestamp advancing 48 per packet (1 ms at 48 kHz). The claim is
                                                                             // determinism, and the gate verifies it off the wire.
-                                                                            for i in 0..8u32 {
+                                                                            for i in 0..4u32 {  // TEMP: 4 to test whether frame count is the send_udp trigger
                                                                                 let (pkt, pkt_len) = rtp::packet(mac, ip::OUR_IP, r.src_mac, ip::GATEWAY_IP, 5004, 5004, i as u16, 0x1122_3300 + i * rtp::TIMESTAMP_STEP, 0xDEAD_BEEF);
                                                                                 if let Err(e) = net::transmit(&dev, &pkt[..pkt_len]) {
                                                                                     uart.write_line(e);
