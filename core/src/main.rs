@@ -549,7 +549,7 @@ fn fdt_demo(uart: &Uart) {
                                                             let mut l = uart::LineBuf::new();
                                                             l.push_str("NET: RECEIVED ");
                                                             l.push_u64(r.len as u64);
-                                                            l.push_str(" bytes, ethertype 0x");
+                                                            l.push_str(" bytes, ethertype ");
                                                             l.push_hex(r.ethertype as u64);
                                                             l.push_str(" — an inbound frame completed into our ring");
                                                             l.flush(&uart);
