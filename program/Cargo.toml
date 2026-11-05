@@ -29,6 +29,9 @@ selfcheck-mutant-wrong-count = []
 # The engine mutation: emit the mix engine's output under a wrong SSRC, so the
 # gate's engine check (SSRC 0x0000000B) must go red.
 engine-mutant-wrong-ssrc = []
+# The mix mutation: mute the routing so the output carries no ramp, so the
+# gate's "the mix happened" check must go red.
+engine-mutant-silent-mix = []
 
 [profile.release]
 panic = "abort"

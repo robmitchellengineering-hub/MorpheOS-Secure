@@ -17,7 +17,7 @@ case "$MODE" in --self-test) WORK="$WORK/selftest" ;; *) WORK="$WORK/check" ;; e
 case "$MODE" in check|--self-test) ;; *) echo "usage: net.sh [--self-test]" >&2; exit 2 ;; esac
 FEATURES=""
 PROG_FEATURES=""
-if [ "$MODE" = "--self-test" ]; then FEATURES="--features ip-mutant-bad-checksum,udp-mutant-bad-checksum,rtp-mutant-frozen-seq,rtp-mutant-wrong-ssrc"; PROG_FEATURES="--features rtp-mutant-wrong-ssrc,selfcheck-mutant-wrong-count,engine-mutant-wrong-ssrc"; fi
+if [ "$MODE" = "--self-test" ]; then FEATURES="--features ip-mutant-bad-checksum,udp-mutant-bad-checksum,rtp-mutant-frozen-seq,rtp-mutant-wrong-ssrc"; PROG_FEATURES="--features rtp-mutant-wrong-ssrc,selfcheck-mutant-wrong-count,engine-mutant-wrong-ssrc,engine-mutant-silent-mix"; fi
 command -v cargo >/dev/null 2>&1 || { echo "REFUSED: no cargo here" >&2; exit 2; }
 command -v qemu-system-aarch64 >/dev/null 2>&1 || { echo "REFUSED: no qemu-system-aarch64 here" >&2; exit 2; }
 export CARGO_TARGET_DIR="$WORK/target"
@@ -287,6 +287,45 @@ PYENGINE
 )
 ENGINE=${ENGINE:-0}
 
+# THE MIX ITSELF, NOT JUST THE PACKET. The program feeds the engine a ramp
+# (sample = (first + frame) * 1000) and the passthrough matrix should hand it
+# back, scaled but still a ramp. The gate decodes the engine's output L24 off the
+# capture and requires a run of constant non-zero steps — silence (concealment)
+# or a frozen mix has no such run, so this is the difference between "a valid
+# RTP packet left" and "the input audio came back out of the mix".
+ENGINE_MIXED=$(python3 - "$PCAP" <<'PYMIX'
+import struct, sys
+d = open(sys.argv[1], 'rb').read()
+off, ramps = 24, 0
+while off + 16 <= len(d):
+    _, _, incl, _ = struct.unpack_from('<IIII', d, off); off += 16
+    f = d[off:off + incl]; off += incl
+    if len(f) >= 72 and f[12:14] == bytes([8, 0]) and f[23] == 17 \
+       and f[42] == 0x90 and f[50:54] == bytes([0x00, 0x00, 0x00, 0x0B]):
+        payload = f[70:70 + 576]
+        if len(payload) < 576:
+            continue
+        left = []
+        for i in range(0, len(payload), 6):  # interleaved L,R: left is every other 3-byte sample
+            v = (payload[i] << 16) | (payload[i + 1] << 8) | payload[i + 2]
+            if v & 0x800000:
+                v -= 0x1000000
+            left.append(v)
+        steps = [left[i + 1] - left[i] for i in range(len(left) - 1)]
+        run = 1
+        for i in range(1, len(steps)):
+            if steps[i] == steps[i - 1] and steps[i] != 0:
+                run += 1
+                if run >= 16:
+                    ramps += 1
+                    break
+            else:
+                run = 1
+print(ramps)
+PYMIX
+)
+ENGINE_MIXED=${ENGINE_MIXED:-0}
+
 # THE LOADED PROGRAM'S DATAGRAM. The API-surface rung sends a UDP datagram whose payload is MORPHEOS-SVC. It must be on
 # the wire with a CORRECT checksum — the same arithmetic the demo datagram proved, but carrying the loaded program's own
 # payload. This is the difference between 'a datagram left' and 'the loaded program's datagram left'.
@@ -325,7 +364,7 @@ PYSVC
 SVC_UDP=${SVC_UDP:-0}
 
 if [ "$MODE" = "--self-test" ]; then
-    if [ "$GOOD_ICMP" -ne 0 ] || [ "$GOOD_UDP" -ne 0 ] || [ "$SVC_UDP" -ne 0 ] || [ "$RTP_OK" -ne 0 ] || [ "$ENGINE_RTP" -ne 0 ] || [ "$SELFCHECK" -ne 0 ] || [ "$ENGINE" -ne 0 ]; then
+    if [ "$GOOD_ICMP" -ne 0 ] || [ "$GOOD_UDP" -ne 0 ] || [ "$SVC_UDP" -ne 0 ] || [ "$RTP_OK" -ne 0 ] || [ "$ENGINE_RTP" -ne 0 ] || [ "$SELFCHECK" -ne 0 ] || [ "$ENGINE" -ne 0 ] || [ "$ENGINE_MIXED" -ne 0 ]; then
         echo "FAIL (self-test): a mutation still produced a valid datagram or self-check report" >&2; exit 1
     fi
     echo "ok (self-test): with the mutations no valid reply, datagram or self-check report is accepted — the checks read the wire"
@@ -368,3 +407,8 @@ if [ "$ENGINE" -eq 0 ]; then
     echo "FAIL: the mix engine's RTP (SSRC 0x0000000B) did not reach the wire" >&2; exit 1
 fi
 echo "ok: the mix engine's RTP reached the wire (SSRC 0x0000000B)"
+
+if [ "$ENGINE_MIXED" -eq 0 ]; then
+    echo "FAIL: the mix engine's output carried no ramp — the audio did not come back out of the mix" >&2; exit 1
+fi
+echo "ok: the mix engine's output L24 carries the input ramp — the mix happened, read off the capture"

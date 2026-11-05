@@ -291,17 +291,27 @@ fn run_engine() -> usize {
     let mut eng = Engine::new(cfg, mcfg);
     {
         let m = eng.matrix();
-        // Passthrough: input 0 -> output 0, input 1 -> output 1.
-        let _ = m.connect(Node::Input(0), Node::Output(0), 0.0);
-        let _ = m.connect(Node::Input(1), Node::Output(1), 0.0);
+        // Passthrough: input 0 -> output 0, input 1 -> output 1. The mutation
+        // mutes the routing, so the output carries no ramp and the gate's
+        // "mix happened" check must go red.
+        let gain = if cfg!(feature = "engine-mutant-silent-mix") {
+            f32::NEG_INFINITY
+        } else {
+            0.0
+        };
+        let _ = m.connect(Node::Input(0), Node::Output(0), gain);
+        let _ = m.connect(Node::Input(1), Node::Output(1), gain);
     }
     let mut sender = Packetizer::new(fmt, 0xA, 97, 1);
     let mut pkt = [0u8; 1500];
     let mut pcm = [0i32; (P * 2) as usize];
     let mut emitted = 0usize;
     let mut now = 100 * MS;
-    for k in 0..4i64 {
-        let first = k * P;
+    for _ in 0..4 {
+        // Stamp the input at the sender's period index (now / 2 ms − 1), so the
+        // engine's first mixable period has data. `first = k·96` would sit 4.5 s
+        // before the engine's base and the mix would only ever conceal.
+        let first = (now / (2 * MS)) as i64 * P - P;
         for j in 0..P as usize {
             for c in 0..2usize {
                 // A ramp in the low bits — clearly ours, no float math needed.
