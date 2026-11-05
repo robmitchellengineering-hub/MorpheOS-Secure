@@ -46,7 +46,7 @@ pub fn start_queue(dev: &Device) -> Result<(), &'static str> {
         // descriptor, length, flags and available index all correct, offered to queue 0, is never completed, because a
         // receive queue is not where a frame goes out. The ring was right all along; the queue was wrong.
         wr(dev.base, 0x030, 1); // QueueSel = 1, the transmit queue
-        let max = (rd(dev.base, 0x034) as u16).min(8);
+        let max = (rd(dev.base, 0x034) as u16).min(64);
         if max == 0 {
             return Err("the device offers no queue");
         }
@@ -120,7 +120,7 @@ pub fn transmit(dev: &Device, frame: &[u8]) -> Result<u32, &'static str> {
         let avail = rings.add(AVAIL_OFF);
         core::ptr::write_volatile(avail as *mut u16, 0); // flags
         core::ptr::write_volatile((avail as *mut u16).add(1), my_idx); // idx: must grow
-        core::ptr::write_volatile((avail as *mut u16).add(2), 0); // ring[0] = descriptor 0
+        core::ptr::write_volatile((avail as *mut u16).add(2 + (my_idx.wrapping_sub(1) as usize) % 8), 0); // ring[(idx-1) % 8]
 
         // Kick the transmit queue, then wait for the completion that matches THIS index.
         wr(dev.base, 0x050, 1);
@@ -129,7 +129,7 @@ pub fn transmit(dev: &Device, frame: &[u8]) -> Result<u32, &'static str> {
         loop {
             let used_idx = core::ptr::read_volatile((used as *const u16).add(1));
             if used_idx >= my_idx {
-                let slot = (my_idx.wrapping_sub(1) as usize) % 8;
+                let slot = (my_idx.wrapping_sub(1) as usize) % 64;
                 let entry = used.add(4 + slot * 8);
                 let written = core::ptr::read_volatile((entry as *const u32).add(1));
                 return Ok(written);
