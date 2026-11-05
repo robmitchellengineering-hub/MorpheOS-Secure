@@ -4,4 +4,6 @@ fn main() {
     // -T here can be resolved from whatever directory the linker runs in.
     println!("cargo:rustc-link-arg=-T{}/linker.ld", env!("CARGO_MANIFEST_DIR"));
     println!("cargo:rustc-link-arg=-no-pie");
+    println!("cargo:rustc-link-arg=-z");
+    println!("cargo:rustc-link-arg=max-page-size=4096");
 }
