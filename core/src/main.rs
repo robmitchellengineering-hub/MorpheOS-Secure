@@ -593,10 +593,13 @@ fn fdt_demo(uart: &Uart) {
                                     }
                                         // ELF LOAD. Read the ELF off the disk, place its PT_LOAD segment at the declared address, and call the entry.
                                         // The result (66) can only appear if a COMPILED program was placed in memory and executed.
-                                        let mut elfbuf = [0u8; 5120];
+                                        // 32 sectors (16 KiB) — the program links rob-core's wire-format code, so its
+                                        // ELF is larger than the earlier hand-crafted 776-byte program. The buffer must
+                                        // cover the whole file up to the last PT_LOAD segment, or elf::load reads past it.
+                                        let mut elfbuf = [0u8; 16384];
                                         let mut sec = [0u8; 512];
                                         let mut elf_ok = true;
-                                        for s in 0..10usize {
+                                        for s in 0..32usize {
                                             if let Ok(0) = blk::read_sector(&blk, 4 + s as u64, &mut sec) {
                                                 elfbuf[s * 512..(s + 1) * 512].copy_from_slice(&sec);
                                             } else {

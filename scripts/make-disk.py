@@ -67,7 +67,7 @@ disk[2048:2048 + 776] = e
 import os
 _elf_path = sys.argv[2] if len(sys.argv) > 2 else None
 if _elf_path and os.path.exists(_elf_path):
-    _e = bytearray(open(_elf_path, "rb").read()[:5120])
+    _e = bytearray(open(_elf_path, "rb").read()[:16384])
     disk[2048:2048 + len(_e)] = _e
 
 open(path, "wb").write(bytes(disk))
