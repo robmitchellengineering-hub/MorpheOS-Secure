@@ -160,6 +160,21 @@ pub fn ring_snapshot() -> (u64, u32, u16, u16, u16, u16, u16) {
     }
 }
 
+/// Read the used ring's idx and the last completed entry, so a zero-byte completion can be seen for what it is: the
+/// device wrote 0, not the driver misreading the slot.
+pub fn used_snapshot() -> (u16, u32, u32) {
+    unsafe {
+        let rings = &raw const RINGS as *const u8;
+        let used = rings.add(USED_OFF);
+        let idx = core::ptr::read_volatile((used as *const u16).add(1));
+        let slot = (idx.wrapping_sub(1) as usize) % 8;
+        let entry = used.add(4 + slot * 8);
+        let id = core::ptr::read_volatile(entry as *const u32);
+        let len = core::ptr::read_volatile((entry as *const u32).add(1));
+        (idx, id, len)
+    }
+}
+
 /// Build an Ethernet + ARP request: "who has 10.0.2.2? tell 10.0.2.15". A frame a host-side capture cannot mistake for
 /// noise, and one that needs no protocol stack above it.
 pub fn arp_request(mac: [u8; 6]) -> ([u8; 42], usize) {
