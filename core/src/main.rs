@@ -542,12 +542,26 @@ fn fdt_demo(uart: &Uart) {
                                                 for i in 0..8 {
                                                     core::ptr::write_volatile((core::ptr::addr_of_mut!(LOAD_BUF) as *mut u8).add(i), sector2[i]);
                                                 }
-                                                let loaded: unsafe extern "C" fn() -> u64 = core::mem::transmute(core::ptr::addr_of!(LOAD_BUF) as *const ());
-                                                let r = loaded();
-                                                let mut l = uart::LineBuf::new();
-                                                l.push_str("LOAD: code loaded from disk returned ");
-                                                l.push_u64(r);
-                                                l.flush(&uart);
+                                                                                                // MILESTONE 3: validate as a box BEFORE the jump. The loaded bytes declare their extent, the Core checks it against
+                                                // the granted limit, and only an admitted box runs. A lying claim is refused here, not after it faults.
+                                                let code_start = core::ptr::addr_of!(LOAD_BUF) as u64;
+                                                let request = box_admission::BoxRequest {
+                                                    name: "disk-code",
+                                                    code_start,
+                                                    code_len: 8,
+                                                    limit: code_start + 16,
+                                                    claim: box_admission::Claim { highest_address: code_start + 8, signer: "disk-sector-2" },
+                                                };
+                                                if box_admission::admit(&request).is_err() {
+                                                    uart.write_line("LOAD: the loaded code was REFUSED at load — it will not run");
+                                                } else {
+    let loaded: unsafe extern "C" fn() -> u64 = core::mem::transmute(core::ptr::addr_of!(LOAD_BUF) as *const ());
+                                                    let r = loaded();
+                                                    let mut l = uart::LineBuf::new();
+                                                    l.push_str("LOAD: code loaded from disk returned ");
+                                                    l.push_u64(r);
+                                                    l.flush(&uart);
+                                                }
                                             }
                                         }
                                 }
