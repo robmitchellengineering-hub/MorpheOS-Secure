@@ -130,6 +130,8 @@ pub fn on_irq(sp: usize) -> usize {
             l.push_u64(next as u64);
             l.push_str(", incoming ");
             l.push_u64(incoming as u64);
+            l.push_str(", x8 ");
+            l.push_u64(core::ptr::read_volatile((incoming + 64) as *const usize) as u64);
             l.flush(&crate::uart::Uart::at(crate::uart::UART_QEMU_VIRT));
         }
         core::ptr::write_volatile(core::ptr::addr_of_mut!(CURRENT), next);
