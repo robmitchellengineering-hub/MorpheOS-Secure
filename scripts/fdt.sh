@@ -107,3 +107,7 @@ echo "ok: a loaded program applied a certified generation through the Core"
 # SEND_UDP: the loaded program asks the Core to put a UDP datagram on the wire; the byte count must round-trip.
 grep -qF "SVC: sent a UDP datagram" "$LOG" || { echo "FAIL: the send_udp syscall did not put a datagram on the wire" >&2; exit 1; }
 echo "ok: a loaded program sent a UDP datagram through the Core"
+
+# YIELD: the loaded program signals a yield through the Core; the scheduler records it (count 1).
+grep -qF "SVC: the loaded program yielded (1)" "$LOG" || { echo "FAIL: the yield syscall did not record" >&2; exit 1; }
+echo "ok: a loaded program yielded through the Core"

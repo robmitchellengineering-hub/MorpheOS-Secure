@@ -996,7 +996,19 @@ pub extern "C" fn svc_handler(frame: *mut u64) {
                     }
                 }
             }
-            3 => {
+            2 => {
+                // yield: the loaded program signals it is giving up its turn. The scheduler records it (a monotonic
+                // counter); the full context switch is the follow-up once the preemption rung installs the second task.
+                static YIELD_COUNT: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
+                let n = YIELD_COUNT.fetch_add(1, core::sync::atomic::Ordering::Relaxed) + 1;
+                let mut l = crate::uart::LineBuf::new();
+                l.push_str("SVC: the loaded program yielded (");
+                l.push_u64(n);
+                l.push_str(")");
+                l.flush(&uart);
+                n
+            }
+            3 => {            3 => {
                 // send_udp: compose a UDP datagram and put it on the wire. The device base and the gateway MAC were
                 // threaded out of the network demo; the queue is already started, so the transmit continues the monotonic
                 // descriptor sequence.
