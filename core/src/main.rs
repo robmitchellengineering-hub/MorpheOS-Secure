@@ -425,27 +425,46 @@ fn fdt_demo(uart: &Uart) {
             l.flush(&uart);
             if a.base == uart::UART_QEMU_VIRT as u64 {
                 uart.write_line("FDT: the tree AGREES with the constant — on the Pi the tree wins");
-            }         // Can the Core even SEE the window? Three words of the virtio-mmio header answer it: magic ("virt"), version,
-        // and device id. If the page tables do not map it, this faults and the handler says so - which is also an answer.
+            }         // WHICH WINDOW HOLDS THE DEVICE? Measured: the tree's first virtio-mmio node is an EMPTY slot (device id 0,
+        // legacy version 1), so the driver's first job is enumeration, not setup. QEMU's transports are contiguous,
+        // 0x200 apart; the BASE comes from the tree, only the stride is assumed - and on real hardware the tree lists
+        // each transport, which is why the loop stays bounded.
         if let Ok(a) = fdt::find_compatible(dtb, "virtio,mmio") {
             let base = a.base as usize;
-            // SAFETY: the address came from the firmware's own tree; a fault here is the measurement.
-            let (magic, version, device) = unsafe {
-                let w = |off: usize| core::ptr::read_volatile((base + off) as *const u32);
-                (w(0x000), w(0x004), w(0x008))
-            };
-            let mut l = uart::LineBuf::new();
-            l.push_str("NET: header magic ");
-            l.push_hex(magic as u64);
-            l.push_str(" version ");
-            l.push_u64(version as u64);
-            l.push_str(" device id ");
-            l.push_u64(device as u64);
-            l.flush(uart);
-            if magic == 0x7472_6976 && version == 2 && device == 1 {
-                uart.write_line("NET: a virtio-net device is reachable and says what it is");
-            } else {
-                uart.write_line("NET: the window is reachable but is not a modern virtio-net");
+            let mut found: Option<usize> = None;
+            for slot in 0..8usize {
+                let window = base + slot * 0x200;
+                // SAFETY: inside the window the firmware described; a fault here is the measurement.
+                let (magic, version, device) = unsafe {
+                    let w = |off: usize| core::ptr::read_volatile((window + off) as *const u32);
+                    (w(0x000), w(0x004), w(0x008))
+                };
+                if magic != 0x7472_6976 {
+                    continue;
+                }
+                let mut l = uart::LineBuf::new();
+                l.push_str("NET: window ");
+                l.push_u64(slot as u64);
+                l.push_str(" at ");
+                l.push_hex(window as u64);
+                l.push_str(" — version ");
+                l.push_u64(version as u64);
+                l.push_str(", device ");
+                l.push_u64(device as u64);
+                l.flush(uart);
+                if device == 1 && found.is_none() {
+                    found = Some(window);
+                }
+            }
+            match found {
+                Some(w) => {
+                    let mut l = uart::LineBuf::new();
+                    l.push_str("NET: the network device is at ");
+                    l.push_hex(w as u64);
+                    l.push_str(" — chosen by its own device id");
+                    l.flush(uart);
+                }
+                None => uart.write_line("NET: no virtio-net among the windows scanned"),
             }
         }
 else {
