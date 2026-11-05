@@ -78,19 +78,6 @@ pub fn init() {
         write(GICR_ISENABLER0, 1 << TIMER_INTID);
         write(GICD_CTLR, 1);
         let _ = core::ptr::read_volatile(GICR_ISENABLER0 as *const u32);
-        let uart = crate::uart::Uart::at(crate::uart::UART_QEMU_VIRT);
-        let mut l = crate::uart::LineBuf::new();
-        l.push_str("GICv3: SRE ");
-        let sre2: u64; asm!("mrs {0}, icc_sre_el1", out(reg) sre2, options(nostack)); l.push_u64(sre2);
-        l.push_str(", IGRPEN1 ");
-        let ig: u64; asm!("mrs {0}, icc_igrpen1_el1", out(reg) ig, options(nostack)); l.push_u64(ig);
-        l.push_str(", ISENABLER0 ");
-        l.push_hex(core::ptr::read_volatile(GICR_ISENABLER0 as *const u32) as u64);
-        l.push_str(", IGROUPR0 ");
-        l.push_hex(core::ptr::read_volatile(GICR_IGROUPR0 as *const u32) as u64);
-        l.push_str(", CNTP_CTL ");
-        let ctl: u64; asm!("mrs {0}, cntp_ctl_el0", out(reg) ctl, options(nostack)); l.push_u64(ctl);
-        l.flush(&uart);
     }
 }
 

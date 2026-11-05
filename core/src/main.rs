@@ -1424,13 +1424,6 @@ pub extern "C" fn kmain() -> ! {
     gic::init();
     uart.write_line("IRQ: the GIC is up (distributor + CPU interface + PPI 30)");
     clock::arm_in(clock::ticks_for_ms(1));
-    {
-        let mut l = uart::LineBuf::new();
-        l.push_str("IRQ: CNTP_CTL after arm = ");
-        let ctl: u64; unsafe { core::arch::asm!("mrs {0}, cntp_ctl_el0", out(reg) ctl, options(nostack)) };
-        l.push_u64(ctl);
-        l.flush(&uart);
-    }
     uart.write_line("IRQ: the timer is armed for 1 ms");
     let irq_start = clock::now();
     // SAFETY: the vector table and the GIC are both in place.
