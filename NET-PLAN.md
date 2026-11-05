@@ -162,3 +162,23 @@ but not for ICMP, which hostfwd cannot forward. Genuine ping therefore waits on 
   the self-test caught it.
 - The squash-duplication transplant (`git diff origin/main..<branch> | git apply -3` onto a fresh branch) is the
   reliable way to land stacked network branches, after two rebases failed on the same conflict.
+
+
+## STATE, 2026-11-05 — rung 4 done on a real wire; the last ICMP-unicast proof needs a second machine
+
+The Core exchanged **ARP, ICMP, UDP and RTP with a real router** on `192.168.15.0/24`, captured by pacland-rog's own
+`tcpdump` — the peer's capture, not ours. Two bugs only the real wire could expose, both fixed and merged (#52):
+1. the ARP builders hardcoded the slirp address while the IP layer was configurable;
+2. a macvtap whose MAC differs from the guest's drops every unicast reply (77 multicast received, 0 unicast).
+
+### The live-ping half (branch `net/live-ping`, unmerged)
+The Core now has a bounded loop that answers a **real** inbound ARP-for-itself and ICMP echo request — a live host, not
+a demo. It builds and the slirp gate stays green (the loop is gated behind `net-lan-19216815` so the slirp test does not
+wait ~30s for a ping that can never come). It is **not merged** because its claim — "answers a real ping" — is not yet
+green: verifying it needs a second machine.
+
+### The rig limit that blocks the last proof
+pacland is the QEMU host; **macvtap cannot hairpin** — the host's own unicast to its own guest never reaches it (the ARP
+broadcast gets through, the echo unicast does not). That is a property of the rig, not the code, and it is the same
+reason rung 5 (the Pi) exists: a real second box. The last proof is either a ping from a second device on
+`192.168.15.0/24`, or the Pi.
