@@ -34,6 +34,7 @@ mod gic;
 mod sched;
 mod ledger;
 mod mmu;
+mod net;
 mod task;
 mod uart;
 use cap::{access, CapTable, Object, ObjectId};
@@ -519,6 +520,29 @@ fn fdt_demo(uart: &Uart) {
                             l.push_byte(HEX[(*b & 0xf) as usize]);
                         }
                         l.flush(uart);
+                        // THE RING AND THE FIRST FRAME. Started only after the device is ready: a ring offered to a
+                        // device that has not acknowledged the driver is a ring the device will never read.
+                        if final_status & 0x0f == 0x0f {
+                            let dev = net::Device { base: w, mac, queue_num: 0 };
+                            match net::start_queue(&dev) {
+                                Ok(()) => {
+                                    uart.write_line("NET: the queue's rings are in our own memory, addressed by page frame");
+                                    let (frame, len) = net::arp_request(mac);
+                                    match net::transmit(&dev, &frame[..len]) {
+                                        Ok(written) => {
+                                            let mut l = uart::LineBuf::new();
+                                            l.push_str("NET: the device completed the descriptor and said it wrote ");
+                                            l.push_u64(written as u64);
+                                            l.push_str(" bytes");
+                                            l.flush(uart);
+                                            uart.write_line("NET: an ARP request went out on the wire — the host's capture decides whether it arrived");
+                                        }
+                                        Err(e) => uart.write_line(e),
+                                    }
+                                }
+                                Err(e) => uart.write_line(e),
+                            }
+                        }
                         if final_status & 0x0f == 0x0f {
                             uart.write_line("NET: the device acknowledged the driver and is ready — a driver exists, not yet a frame");
                         } else {

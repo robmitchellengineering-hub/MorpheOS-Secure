@@ -61,7 +61,8 @@ PATCH
 
 timeout "${FDT_TIMEOUT:-25}" qemu-system-aarch64 -M virt -cpu cortex-a76 -m 256M \
     -kernel "$IMG" -nographic -monitor none -serial stdio \
-    -netdev user,id=n0 -device virtio-net-device,netdev=n0 > "$LOG" 2>&1
+    -netdev user,id=n0 -device virtio-net-device,netdev=n0 \
+    -object filter-dump,id=f0,netdev=n0,file="$WORK/net.pcap" > "$LOG" 2>&1
 echo "== what the Core wrote (FDT lines)"
 sed -e 's/\r$//' "$LOG" | grep -E "^FDT:" | head -5
 AGREE="FDT: the tree AGREES with the constant — on the Pi the tree wins"
