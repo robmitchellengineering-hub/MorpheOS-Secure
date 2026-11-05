@@ -27,8 +27,9 @@ pub fn packet(
     timestamp: u32,
     ssrc: u32,
 ) -> ([u8; 256], usize) {
-    let mut rtp = [0u8; 12 + PAYLOAD_BYTES];
-    rtp[0] = 0x80; // V=2
+    // RFC 3550 RTP header (12 bytes) + the AMT one-byte extension (16 bytes) + payload. X=1 marks the extension.
+    let mut rtp = [0u8; 12 + 16 + PAYLOAD_BYTES];
+    rtp[0] = 0x90; // V=2, X=1 (extension present)
     rtp[1] = PAYLOAD_TYPE;
     if cfg!(feature = "rtp-mutant-frozen-seq") {
         rtp[2] = 0;
@@ -52,8 +53,16 @@ pub fn packet(
         rtp[10] = (ssrc >> 8) as u8;
         rtp[11] = ssrc as u8;
     }
+    // AMT extension, RFC 8285 one-byte form: profile 0xBEDE, length 3 words, element ID 1 / length 9, then the
+    // 9-byte amt-core data (version/mode, path/slot, budget_us, send_time_us) and 2 padding bytes. Zero for now —
+    // this is the transport envelope AirMatrix's engine fills with real values.
+    rtp[12] = 0xBE;
+    rtp[13] = 0xDE;
+    rtp[14] = 0x00;
+    rtp[15] = 0x03;
+    rtp[16] = 0x18;
     for i in 0..PAYLOAD_BYTES {
-        rtp[12 + i] = (seq as u8).wrapping_add(i as u8); // a ramp keyed to the sequence, so a frozen sequence is visible
+        rtp[28 + i] = (seq as u8).wrapping_add(i as u8); // a ramp keyed to the sequence, so a frozen sequence is visible
     }
     udp::datagram(our_mac, our_ip, dst_mac, dst_ip, src_port, dst_port, &rtp)
 }
