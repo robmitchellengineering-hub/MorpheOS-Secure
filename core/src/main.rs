@@ -37,6 +37,7 @@ mod mmu;
 mod net;
 mod ip;
 mod udp;
+mod rtp;
 mod task;
 mod uart;
 use cap::{access, CapTable, Object, ObjectId};
@@ -606,6 +607,15 @@ fn fdt_demo(uart: &Uart) {
                                                                             }
                                                                             None => uart.write_line("NET: UDP parse FAILED"),
                                                                         }
+                                                                            // RUNG 3: RTP. Eight packets, sequence 0..7, timestamp advancing 48 per packet (1 ms at 48 kHz). The claim is
+                                                                            // determinism, and the gate verifies it off the wire.
+                                                                            for i in 0..8u32 {
+                                                                                let (pkt, pkt_len) = rtp::packet(mac, ip::OUR_IP, r.src_mac, ip::GATEWAY_IP, 5004, 5004, i as u16, 0x1122_3300 + i * rtp::TIMESTAMP_STEP, 0xDEAD_BEEF);
+                                                                                if let Err(e) = net::transmit(&dev, &pkt[..pkt_len]) {
+                                                                                    uart.write_line(e);
+                                                                                }
+                                                                            }
+                                                                            uart.write_line("NET: RTP sent 8 packets — sequence 0..7, timestamp step 48, the gate verifies both");
                                                         }
                                                         None => uart.write_line("NET: nothing arrived in the budget — a quiet wire is not an error"),
                                                     }

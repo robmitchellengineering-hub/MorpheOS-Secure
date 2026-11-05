@@ -21,7 +21,7 @@ pub struct Rings {
 }
 
 static mut RINGS: Rings = Rings { bytes: [0u8; 0x3000] };
-static mut FRAME: [u8; 64] = [0u8; 64];
+static mut FRAME: [u8; 256] = [0u8; 256];
 
 pub struct Device {
     pub base: usize,
@@ -87,7 +87,7 @@ pub fn start_queue(dev: &Device) -> Result<(), &'static str> {
 /// ARP reply were composed and completed and never appeared in the capture. The index is monotonic, and the completion
 /// is read from the used-ring entry that matches it.
 pub fn transmit(dev: &Device, frame: &[u8]) -> Result<u32, &'static str> {
-    if frame.len() + 10 > 64 {
+    if frame.len() + 10 > 256 {
         return Err("frame too large for this milestone's buffer");
     }
     unsafe {
