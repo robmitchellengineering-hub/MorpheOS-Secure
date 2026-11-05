@@ -21,7 +21,10 @@ pub struct Rings {
 }
 
 static mut RINGS: Rings = Rings { bytes: [0u8; 0x3000] };
-static mut FRAME: [u8; 256] = [0u8; 256];
+// 1536 bytes: the Ethernet MTU plus the 10-byte virtio-net header and room, so
+// the engine's real RTP packets (609-byte ROB packet with the plain-duplicate
+// protection, 1245 with the layered) fit the transmit buffer.
+static mut FRAME: [u8; 1536] = [0u8; 1536];
 
 pub struct Device {
     pub base: usize,
@@ -87,7 +90,7 @@ pub fn start_queue(dev: &Device) -> Result<(), &'static str> {
 /// ARP reply were composed and completed and never appeared in the capture. The index is monotonic, and the completion
 /// is read from the used-ring entry that matches it.
 pub fn transmit(dev: &Device, frame: &[u8]) -> Result<u32, &'static str> {
-    if frame.len() + 10 > 256 {
+    if frame.len() + 10 > 1536 {
         return Err("frame too large for this milestone's buffer");
     }
     unsafe {

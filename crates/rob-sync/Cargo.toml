@@ -1,0 +1,19 @@
+[package]
+name = "rob-sync"
+version = "0.1.0"
+edition = "2021"
+description = "Vendored from airmatrix's rob-sync (branch task/no-std-engine) — the no_std engine closure for the MorpheOS-Secure Core."
+license = "LicenseRef-Proprietary"
+rust-version = "1.81"
+
+[dependencies]
+libm = "0.2"
+
+# The vendored copy drops the std network/thread modules; the feature is declared
+# empty so the `#[cfg(feature = "std")]` gates in the source stay un-compiled and
+# no unexpected-cfg warning is raised.
+[features]
+std = []
+
+[lints.rust]
+unsafe_code = "forbid"

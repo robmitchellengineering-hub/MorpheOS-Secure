@@ -18,19 +18,19 @@ mechanism AirMatrix's engine will use to reach the ledger, the scheduler and the
 |---|---|---|---|---|
 | 0 | `report` | none | 0 | **proven** — prints "asked the Core for service" |
 | 1 | `apply_certified` | `x1` = payload | generation id | **proven** — the Core builds+checks a certificate, appends history |
-| 2 | `yield` | none | new-frame pointer | **next** — must mirror `irq_entry`: return the frame `sched::on_irq` chooses, and let `fault_entry` switch to it |
-| 3 | `send_udp` | `x1` = payload ptr, `x2` = len | bytes sent | **next** — needs the net device base + the ARP-learned gateway MAC threaded out of `fdt_demo` into statics |
+| 2 | `yield` | none | count | **proven** — a monotonic counter; the full frame switch is the preemption follow-up |
+| 3 | `send_udp` | `x1` = payload ptr, `x2` = len | bytes sent | **proven** — wraps the program's bytes in a UDP datagram (port 9999) |
+| 4 | `send_rtp` | `x1` = ptr, `x2` = len | bytes sent | **proven** — wraps the program's own RTP packet (port 5004); the program builds the header, the Core only carries it |
+| 5 | `alloc` | `x1` = size | payload ptr, 0 on refusal | **proven** — a block from the Core's 128-byte-aligned first-fit arena (lazily initialised on first call) |
+| 6 | `dealloc` | `x1` = ptr | 0, `u64::MAX` on refusal | **proven** — returns a block; the double-free guard refuses a non-live pointer |
 
-## The two hard parts of the next two, stated
+## What the syscalls back
 
-- **`yield`** is a *frame switch*, not a value return. The SVC path must become like the IRQ path: `svc_handler` returns
-  the next frame (`sched::on_irq(sp)`), `fault_entry` does `mov sp, x0` and `RESTORE_ALL_WITH_STATE`. The comment at
-  `main.rs` "For the INTERRUPT path only" is exactly this distinction, and it will need revisiting for SVC — the SVC path
-  may use `RESTORE_ALL_WITH_STATE` because it does not rewrite ELR.
-- **`send_udp`** needs the device and the gateway MAC that `fdt_demo` already learned via ARP. Store them in statics
-  (Rust 2024: use `AtomicU64`/`UnsafeCell`, not `static mut`) during the network demo, then the handler composes
-  `udp::datagram(...)` and calls `net::transmit(...)`. The falsifier must be the **capture** (`-object filter-dump`),
-  not the console — the network gate rule applies here too.
+- **5/6 are the program's heap.** The loadable program installs a `#[global_allocator]` over `alloc`/`dealloc`, so the
+  mix engine's `Vec`/`Box` allocate from the Core's own arena — the program borrows memory the Core owns, it does not
+  bring its own.
+- **4 is the engine's voice.** `rob-engine` mixes a period and hands the output RTP packet to `send_rtp`; the gate reads
+  the engine's SSRC off the capture, not the console.
 
 ## Why the result is observable, not assumed
 

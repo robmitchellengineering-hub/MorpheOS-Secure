@@ -68,6 +68,12 @@ static mut LOAD_BUF: [u8; 8] = [0u8; 8];
 /// The loaded program's entry point — discovered early, executed LAST, after the network and the scheduler's second task
 /// are live, so its syscalls have subjects. Load early, execute late.
 static ELF_ENTRY: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
+/// The buffer the loader reads the program's ELF into, before placing its
+/// PT_LOAD segments at 0x40200000. 256 KiB: the program's loadable segments end
+/// ~208 KiB into the file (the rest is section headers/symbols the loader never
+/// touches), and this is in .bss — the Core's stack is only 64 KiB, so a stack
+/// local would overflow.
+static mut ELF_BUF: [u8; 262_144] = [0; 262_144];
 /// The network device base and the two MACs, threaded out of the network demo so a loaded program's send_udp can use them.
 static NET_BASE: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
 static OUR_MAC: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
@@ -593,19 +599,24 @@ fn fdt_demo(uart: &Uart) {
                                     }
                                         // ELF LOAD. Read the ELF off the disk, place its PT_LOAD segment at the declared address, and call the entry.
                                         // The result (66) can only appear if a COMPILED program was placed in memory and executed.
-                                        let mut elfbuf = [0u8; 5120];
+                                        // 512 sectors (256 KiB) — the program's loadable segments end ~208 KiB into the
+                                        // file; the buffer must cover up to the last PT_LOAD segment, or elf::load reads
+                                        // past it.
                                         let mut sec = [0u8; 512];
                                         let mut elf_ok = true;
-                                        for s in 0..10usize {
+                                        for s in 0..512usize {
                                             if let Ok(0) = blk::read_sector(&blk, 4 + s as u64, &mut sec) {
-                                                elfbuf[s * 512..(s + 1) * 512].copy_from_slice(&sec);
+                                                unsafe {
+                                                    ELF_BUF[s * 512..(s + 1) * 512].copy_from_slice(&sec);
+                                                }
                                             } else {
                                                 elf_ok = false;
                                                 break;
                                             }
                                         }
                                         if elf_ok {
-                                            match elf::load(&elfbuf) {
+                                            let elfbuf = unsafe { &ELF_BUF[..] };
+                                            match elf::load(elfbuf) {
                                                 Some(entry) => {
                                                     ELF_ENTRY.store(entry, core::sync::atomic::Ordering::Relaxed);
                                                     let mut l = uart::LineBuf::new();
@@ -979,6 +990,7 @@ pub extern "C" fn svc_handler(frame: *mut u64) {
     unsafe {
         let n = core::ptr::read_volatile(frame);
         let arg0 = core::ptr::read_volatile(frame.add(1)); // x1: the syscall's first argument
+        let arg1 = core::ptr::read_volatile(frame.add(2)); // x2: the syscall's second argument
         let uart = crate::uart::Uart::at(crate::uart::UART_QEMU_VIRT);
         let result = match n {
             0 => {
@@ -1054,27 +1066,96 @@ pub extern "C" fn svc_handler(frame: *mut u64) {
                 }
             }
             4 => {
-                // send_rtp: the engine's own RTP stream — a fixed SSRC, distinct from the demo's, so the wire can
-                // attribute this packet to the loaded program.
+                // send_rtp: the loaded program's OWN RTP packet. x1 = pointer to the RTP bytes, x2 = length. The Core
+                // wraps those exact bytes in a UDP datagram (port 5004) and transmits them — it does not compose the
+                // header. That is the difference between "the Core emitted RTP" and "the engine's RTP packet reached the
+                // wire": the program built the AMT-shaped header with rob-core, and the Core only carried it.
                 let base = NET_BASE.load(core::sync::atomic::Ordering::Relaxed) as usize;
                 if base == 0 {
                     uart.write_line("SVC: no network device — send_rtp refused");
                     u64::MAX
                 } else {
-                    let mac = mac_unpack(OUR_MAC.load(core::sync::atomic::Ordering::Relaxed));
-                    let gw = mac_unpack(GW_MAC.load(core::sync::atomic::Ordering::Relaxed));
-                    let dev = net::Device { base, mac, queue_num: 0 };
-                    let (frame, len) = rtp::packet(mac, ip::OUR_IP, gw, ip::GATEWAY_IP, 9000, 5004, 100, 4800, 0xC0FF_EE00);
-                    match net::transmit(&dev, &frame[..len]) {
-                        Ok(n) => {
-                            uart.write_line("SVC: sent an RTP packet (engine stream, SSRC 0xDEADBEEF)");
-                            n as u64
+                    let ptr = arg0 as *const u8;
+                    let len = arg1 as usize;
+                    // The UDP payload ceiling is the 1536-byte transmit buffer minus the 42 bytes of Ethernet, IPv4 and
+                    // UDP header — room for the engine's real RTP packets (609 bytes with the plain duplicate, 1245
+                    // with the layered protection).
+                    if len == 0 || len > 1494 {
+                        uart.write_line("SVC: send_rtp refused — the RTP length is not a packet");
+                        u64::MAX
+                    } else {
+                        let mut rtp_bytes = [0u8; 1494];
+                        for i in 0..len {
+                            rtp_bytes[i] = core::ptr::read_volatile(ptr.add(i));
                         }
-                        Err(e) => {
-                            uart.write_line(e);
-                            u64::MAX
+                        let mac = mac_unpack(OUR_MAC.load(core::sync::atomic::Ordering::Relaxed));
+                        let gw = mac_unpack(GW_MAC.load(core::sync::atomic::Ordering::Relaxed));
+                        let dev = net::Device { base, mac, queue_num: 0 };
+                        let (frame, flen) = udp::datagram(
+                            mac,
+                            ip::OUR_IP,
+                            gw,
+                            ip::GATEWAY_IP,
+                            9000,
+                            5004,
+                            &rtp_bytes[..len],
+                        );
+                        match net::transmit(&dev, &frame[..flen]) {
+                            Ok(n) => {
+                                let mut l = crate::uart::LineBuf::new();
+                                l.push_str("SVC: sent the program's RTP packet of ");
+                                l.push_u64(len as u64);
+                                l.push_str(" bytes");
+                                l.flush(&uart);
+                                n as u64
+                            }
+                            Err(e) => {
+                                uart.write_line(e);
+                                u64::MAX
+                            }
                         }
                     }
+                }
+            }
+            5 => {
+                // alloc: hand the loaded program a block from the Core's own first-fit arena. x1 = size (bytes). The
+                // result is the payload pointer, or 0 when nothing fits — the program's #[global_allocator] maps 0 to a
+                // handle-alloc error. This is the difference between "the program has memory" and "the Core owns the
+                // memory it hands out": the arena is the Core's, and a loaded program only ever borrows from it.
+                //
+                // The loaded program runs DURING the network rung (before the M2b rung that initialises the arena), so
+                // the arena is handed to the free list on the first alloc — lazily, once — rather than assumed ready.
+                static ALLOC_READY: core::sync::atomic::AtomicBool =
+                    core::sync::atomic::AtomicBool::new(false);
+                if !ALLOC_READY.swap(true, core::sync::atomic::Ordering::Relaxed) {
+                    // SAFETY: once, on the single core, before any allocation through this path.
+                    ALLOCATOR.init();
+                }
+                let size = arg0 as usize;
+                if size == 0 || size > 2048 * 1024 {
+                    uart.write_line("SVC: alloc refused — the size is not a request");
+                    0
+                } else {
+                    let p = ALLOCATOR.alloc_block(size);
+                    if p.is_null() {
+                        uart.write_line("SVC: alloc refused — the arena has no block that fits");
+                        0
+                    } else {
+                        p as u64
+                    }
+                }
+            }
+            6 => {
+                // dealloc: return a block. The Core refuses a pointer whose header is not USED — the double-free guard
+                // the allocator's own rung proved. The result is 0 (returned) or u64::MAX (refused).
+                let ptr = arg0 as *mut u8;
+                if ptr.is_null() {
+                    0
+                } else if ALLOCATOR.free_block(ptr) {
+                    0
+                } else {
+                    uart.write_line("SVC: dealloc refused — the pointer is not a live allocation");
+                    u64::MAX
                 }
             }
             _ => u64::MAX, // unknown syscall: the caller sees an error, not a guess
@@ -1494,7 +1575,11 @@ pub extern "C" fn kmain() -> ! {
     uart.write_line("M2b: allocator initialised (arena handed to the free list)");
     {
         use alloc::vec::Vec;
-        let mut cue_list: Vec<u32> = Vec::new();
+        // One allocation (capacity 8), not a growing Vec: with 128-byte alignment the growth path
+        // frees a same-sized block and first-fit reuses the earlier hole, so the reuse check would
+        // compare against the wrong pointer. A single block makes "the freed block was reused"
+        // unambiguous.
+        let mut cue_list: Vec<u32> = Vec::with_capacity(8);
         for cue in 1..=8u32 {
             cue_list.push(cue * 1000);
         }

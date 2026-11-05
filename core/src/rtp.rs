@@ -26,7 +26,7 @@ pub fn packet(
     seq: u16,
     timestamp: u32,
     ssrc: u32,
-) -> ([u8; 256], usize) {
+) -> ([u8; 1536], usize) {
     // RFC 3550 RTP header (12 bytes) + the AMT one-byte extension (16 bytes) + payload. X=1 marks the extension.
     let mut rtp = [0u8; 12 + 16 + PAYLOAD_BYTES];
     rtp[0] = 0x90; // V=2, X=1 (extension present)
