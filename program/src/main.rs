@@ -59,7 +59,7 @@ fn check_header_with_extension_round_trips() -> bool {
     let Ok(p) = rtp::parse(&buf[..n + 4], DEFAULT_ROB_EXT_ID) else {
         return false;
     };
-    p.header == h && p.amt == Some(c) && p.payload == b"DATA"
+    p.header == h && p.rob == Some(c) && p.payload == b"DATA"
 }
 
 fn check_plain_rtp_has_no_rob_fields() -> bool {
@@ -74,7 +74,7 @@ fn check_plain_rtp_has_no_rob_fields() -> bool {
     let Ok(p) = rtp::parse(&buf[..n], DEFAULT_ROB_EXT_ID) else {
         return false;
     };
-    p.amt.is_none() && p.payload.is_empty()
+    p.rob.is_none() && p.payload.is_empty()
 }
 
 fn check_other_extension_ids_are_skipped() -> bool {
@@ -87,7 +87,7 @@ fn check_other_extension_ids_are_skipped() -> bool {
     let Ok(p) = rtp::parse(&buf[..n], DEFAULT_ROB_EXT_ID) else {
         return false;
     };
-    p.amt.is_none()
+    p.rob.is_none()
 }
 
 fn check_rejects_out_of_range_fields() -> bool {
@@ -125,7 +125,7 @@ fn check_rtp_padding_is_removed() -> bool {
 }
 
 fn run_self_checks() -> usize {
-    let mut passed = 0;
+    let mut passed: usize = 0;
     if check_header_with_extension_round_trips() {
         passed += 1;
     }
@@ -173,6 +173,9 @@ pub extern "C" fn _start() -> u64 {
         // the Core to transmit. x1 = pointer, x2 = length. The payload's first
         // three bytes carry the self-check result ("SC" + pass count) so the
         // gate reads the tests' verdict off the CAPTURE, not the console.
+        // Run the six RTP self-checks FIRST, before the packet buffer exists, so
+        // their stack frames cannot alias the packet's slot.
+        let passed = run_self_checks();
         let mut packet = [0u8; 12 + 16 + PAYLOAD_BYTES];
         let header = RtpHeader {
             marker: false,
@@ -201,7 +204,6 @@ pub extern "C" fn _start() -> u64 {
             Ok(n) => n,
             Err(_) => return u64::MAX,
         };
-        let passed = run_self_checks();
         packet[hlen] = 0x53; // 'S'
         packet[hlen + 1] = 0x43; // 'C'
         packet[hlen + 2] = passed as u8;
