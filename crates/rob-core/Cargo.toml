@@ -2,13 +2,12 @@
 name = "rob-core"
 version = "0.1.0"
 edition = "2021"
-description = "Vendored rob-core (rtp only) from the AirMatrix repo — the wire format the loadable program builds."
+description = "Vendored from airmatrix's rob-core (branch task/no-std-engine) — the no_std engine closure for the MorpheOS-Secure Core."
 license = "LicenseRef-Proprietary"
 rust-version = "1.81"
 
-# The vendored rtp module is pure byte manipulation — no alloc, no libm — so the
-# program links it without needing a global allocator.
 [dependencies]
+libm = "0.2"
 
 [lints.rust]
 unsafe_code = "forbid"

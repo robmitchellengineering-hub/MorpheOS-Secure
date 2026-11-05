@@ -1,0 +1,13 @@
+[package]
+name = "rob-sync"
+version = "0.1.0"
+edition = "2021"
+description = "Vendored from airmatrix's rob-sync (branch task/no-std-engine) — the no_std engine closure for the MorpheOS-Secure Core."
+license = "LicenseRef-Proprietary"
+rust-version = "1.81"
+
+[dependencies]
+libm = "0.2"
+
+[lints.rust]
+unsafe_code = "forbid"

@@ -1,0 +1,20 @@
+[package]
+name = "rob-engine"
+version = "0.1.0"
+edition = "2021"
+description = "Vendored from airmatrix's rob-engine (branch task/no-std-engine) — the no_std engine closure for the MorpheOS-Secure Core."
+license = "LicenseRef-Proprietary"
+rust-version = "1.81"
+
+[dependencies]
+rob-core = { path = "../rob-core" }
+rob-node = { path = "../rob-node" }
+rob-matrix = { path = "../rob-matrix" }
+rob-dsp = { path = "../rob-dsp" }
+rob-meter = { path = "../rob-meter" }
+rob-sync = { path = "../rob-sync" }
+libm = "0.2"
+spin = "0.9"
+
+[lints.rust]
+unsafe_code = "forbid"

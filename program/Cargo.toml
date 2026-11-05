@@ -9,9 +9,11 @@ name = "morph-program"
 path = "src/main.rs"
 
 [dependencies]
-# Vendored from airmatrix's rob-core (rtp module) so the program builds the
-# AMT/ROB-shaped RTP header with the engine's own wire-format code.
+# Vendored from airmatrix's rob-core (the full wire-format crate) so the program
+# builds the AMT/ROB-shaped RTP header with the engine's own code.
 rob-core = { path = "../crates/rob-core" }
+# The mix engine itself, vendored with its no_std closure.
+rob-engine = { path = "../crates/rob-engine" }
 
 [features]
 # The net gate's --self-test mutation: the program emits a wrong SSRC, so the

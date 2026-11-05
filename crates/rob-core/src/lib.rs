@@ -1,18 +1,36 @@
-//! # rob-core (vendored — `rtp` only)
+//! # rob-core
 //!
-//! A vendored copy of the AirMatrix `rob-core` crate's `rtp` module, so the
-//! loadable program can build the AMT/ROB-shaped RTP header with the engine's
-//! own code rather than a re-implementation. Source:
-//! `github.com/robmitchellengineering-hub/airmatrix`, branch `task/no-std-engine`,
-//! commit `ac71106`, file `crates/rob-core/src/{rtp.rs, lib.rs}`.
+//! The AirMatrix Transport (ROB) wire format and the pure logic around it: RTP
+//! headers with the `rob-core` extension, audio payload blocks, the BC10
+//! block-companded codec, duplicate detection and timestamp unwrapping.
 //!
-//! Only the wire format the program needs is carried here (`rtp` + `Error`).
-//! The full crate (aes67, ptp, correction, dedupe, payload, …) lives in the
-//! airmatrix repo. When rob-core's `rtp.rs` changes there, re-vendor it.
+//! This crate does no I/O and never allocates on its decode paths, so it is safe
+//! to call from a real-time audio thread. The normative description is
+//! `docs/design/04-protocol-spec-v0.1.md`; if code and spec disagree, fix one
+//! of them in the same change.
+//!
+//! `#![no_std]` + `alloc`: the wire format and its parsers/builders must run on
+//! the MorpheOS-Secure Core's loadable programs as well as in the hosted
+//! AirMatrix engine, so the crate links against `alloc` rather than `std`. The
+//! only `std` surface was `std::error::Error` (now `core::error::Error`) and
+//! `std::net::Ipv4Addr` (now `core::net::Ipv4Addr`).
 
 #![cfg_attr(not(test), no_std)]
 
+extern crate alloc;
+
+pub mod aes67;
+pub mod bc10;
+pub mod correction;
+pub mod dedupe;
+pub mod layer;
+pub mod payload;
+pub mod pcm;
+pub mod ptp;
+pub mod resend;
 pub mod rtp;
+pub mod syncmsg;
+pub mod timestamp;
 
 /// Errors from parsing or building ROB packets.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
