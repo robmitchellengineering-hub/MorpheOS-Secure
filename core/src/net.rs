@@ -293,4 +293,7 @@ pub fn poll_rx(dev: &Device, budget: u32) -> Option<Received> {
     }
 }
 
-const RS_USED_ENTRY: usize = 2;
+// A used-ring entry is { u32 id; u32 len; } and begins 4 bytes into the used ring (after flags and idx). As u32
+// indices that is 1 and 2 — measured: with the base at 2 the driver read `len` as the descriptor id and byte 12 as the
+// length, so a completed frame looked like an impossible descriptor and was silently discarded.
+const RS_USED_ENTRY: usize = 1;
