@@ -84,7 +84,11 @@ pub unsafe fn handle() -> u32 {
             let uart = crate::uart::Uart::at(crate::uart::UART_QEMU_VIRT);
             uart.write_line("IRQ: the first timer interrupt arrived — the Core was interrupted, not polled");
         }
-        if n == 1000 {
+        // The storm guard is for a REAL storm: interrupts firing with no switching enabled. Measured: the preemption
+        // demo legitimately runs past 1000 ticks (one second) under node load, and the guard disarmed the timer mid-demo,
+        // killing the very preemption it was measuring - task A then never finished. A storm only looks like a storm
+        // when nothing is being switched; once switching is on, ticks are progress, not a hang.
+        if n == 1000 && !crate::sched::switching() {
             let uart = crate::uart::Uart::at(crate::uart::UART_QEMU_VIRT);
             uart.write_line("IRQ: STORM — 1000 interrupts, disabling the timer so the boot can continue");
             crate::clock::disarm();
