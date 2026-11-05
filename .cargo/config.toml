@@ -5,7 +5,6 @@ target = "aarch64-unknown-none"
 
 [target.aarch64-unknown-none]
 rustflags = [
-    "-C", "link-arg=-Tcore/linker-arm64.ld",
     "-C", "link-arg=-no-pie",
     "-C", "relocation-model=static",
     "-C", "panic=abort",
