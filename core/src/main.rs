@@ -34,6 +34,7 @@ mod gic;
 mod sched;
 mod ledger;
 mod mmu;
+mod net;
 mod task;
 mod uart;
 use cap::{access, CapTable, Object, ObjectId};
@@ -403,6 +404,18 @@ fn fdt_demo(uart: &Uart) {
     l.push_str("FDT: the firmware's device tree is at ");
     l.push_hex(dtb as u64);
     l.flush(&uart);
+    // The network device is described the same way the console is. Asking costs one walk; assuming an address
+    // costs a memory, and this project has already paid for one of those.
+    match fdt::find_compatible(dtb, "virtio,mmio") {
+        Ok(a) => {
+            let mut l = uart::LineBuf::new();
+            l.push_str("NET: a virtio-mmio window at ");
+            l.push_hex(a.base);
+            l.push_str(" is described by the firmware");
+            l.flush(uart);
+        }
+        Err(_) => uart.write_line("NET: no virtio-mmio node in this tree"),
+    }
     match fdt::find_compatible(dtb, "arm,pl011") {
         Ok(a) => {
             let mut l = uart::LineBuf::new();
@@ -413,7 +426,188 @@ fn fdt_demo(uart: &Uart) {
             l.flush(&uart);
             if a.base == uart::UART_QEMU_VIRT as u64 {
                 uart.write_line("FDT: the tree AGREES with the constant — on the Pi the tree wins");
-            } else {
+            }         // WHICH WINDOW HOLDS THE DEVICE? Measured: the tree's first virtio-mmio node is an EMPTY slot (device id 0,
+        // legacy version 1), so the driver's first job is enumeration, not setup. QEMU's transports are contiguous,
+        // 0x200 apart; the BASE comes from the tree, only the stride is assumed - and on real hardware the tree lists
+        // each transport, which is why the loop stays bounded.
+        if let Ok(a) = fdt::find_compatible(dtb, "virtio,mmio") {
+            let base = a.base as usize;
+            let mut found: Option<usize> = None;
+            // QEMU's virt places its virtio-mmio transports across the whole window range and may attach a device to a
+            // late one — measured: with eight slots scanned and a NIC passed on the command line, every window still
+            // reported nothing. So the scan covers the full transport count and prints only windows that hold a device.
+            for slot in 0..32usize {
+                let window = base + slot * 0x200;
+                // SAFETY: inside the window the firmware described; a fault here is the measurement.
+                let (magic, version, device) = unsafe {
+                    let w = |off: usize| core::ptr::read_volatile((window + off) as *const u32);
+                    (w(0x000), w(0x004), w(0x008))
+                };
+                if magic != 0x7472_6976 || device == 0 {
+                    continue;
+                }
+                let mut l = uart::LineBuf::new();
+                l.push_str("NET: window ");
+                l.push_u64(slot as u64);
+                l.push_str(" at ");
+                l.push_hex(window as u64);
+                l.push_str(" — version ");
+                l.push_u64(version as u64);
+                l.push_str(", device ");
+                l.push_u64(device as u64);
+                l.flush(uart);
+                if device == 1 && found.is_none() {
+                    found = Some(window);
+                }
+            }
+            match found {
+                Some(w) => {
+                    let mut l = uart::LineBuf::new();
+                    l.push_str("NET: the network device is at ");
+                    l.push_hex(w as u64);
+                    l.push_str(" — chosen by its own device id");
+                    l.flush(uart);
+
+                    // THE STATUS HANDSHAKE, in the order the specification demands: reset, acknowledge, driver,
+                    // features, then DRIVER_OK. Each step is read back, because a driver that assumes a write landed is
+                    // a driver that cannot tell "unsupported" from "broken".
+                    // SAFETY: inside the window the firmware described.
+                    unsafe {
+                        let rd = |off: usize| core::ptr::read_volatile((w + off) as *const u32);
+                        let wr = |off: usize, v: u32| core::ptr::write_volatile((w + off) as *mut u32, v);
+                        wr(0x070, 0); // reset
+                        let mut status = 0u32;
+                        wr(0x070, status | 1); // ACKNOWLEDGE
+                        status |= 1;
+                        wr(0x070, status | 2); // DRIVER
+                        status |= 2;
+                        wr(0x014, 0); // feature word 0
+                        let features = rd(0x010);
+                        wr(0x024, 0);
+                        // Legacy only: the page size the ring will use.
+                        wr(0x028, 4096);
+                        wr(0x020, features & 0x0000_0001); // take only what we understand so far
+                        wr(0x070, status | 8); // FEATURES_OK
+                        let after_features = rd(0x070);
+                        status = after_features;
+                        wr(0x070, status | 4); // DRIVER_OK
+                        let final_status = rd(0x070);
+
+                        let mut l = uart::LineBuf::new();
+                        l.push_str("NET: features offered 0x");
+                        l.push_hex(features as u64);
+                        l.push_str(", status now 0x");
+                        l.push_hex(final_status as u64);
+                        l.flush(uart);
+
+                        // The MAC lives in the device's config space, at 0x100 for legacy virtio-net.
+                        let mac: [u8; 6] = [
+                            core::ptr::read_volatile((w + 0x100) as *const u8),
+                            core::ptr::read_volatile((w + 0x101) as *const u8),
+                            core::ptr::read_volatile((w + 0x102) as *const u8),
+                            core::ptr::read_volatile((w + 0x103) as *const u8),
+                            core::ptr::read_volatile((w + 0x104) as *const u8),
+                            core::ptr::read_volatile((w + 0x105) as *const u8),
+                        ];
+                        let mut l = uart::LineBuf::new();
+                        l.push_str("NET: the device's MAC is ");
+                        const HEX: &[u8; 16] = b"0123456789abcdef";
+                        for (i, b) in mac.iter().enumerate() {
+                            if i > 0 {
+                                l.push_str(":");
+                            }
+                            l.push_byte(HEX[(*b >> 4) as usize]);
+                            l.push_byte(HEX[(*b & 0xf) as usize]);
+                        }
+                        l.flush(uart);
+                        // THE RING AND THE FIRST FRAME. Started only after the device is ready: a ring offered to a
+                        // device that has not acknowledged the driver is a ring the device will never read.
+                        if final_status & 0x0f == 0x0f {
+                            let dev = net::Device { base: w, mac, queue_num: 0 };
+                            match net::start_queue(&dev) {
+                                Ok(()) => {
+                                    uart.write_line("NET: the queue's rings are in our own memory, addressed by page frame");
+                                    let (frame, len) = net::arp_request(mac);
+                                    match net::transmit(&dev, &frame[..len]) {
+                                        Ok(written) => {
+                                            let mut l = uart::LineBuf::new();
+                                            l.push_str("NET: the device completed the descriptor and said it wrote ");
+                                            l.push_u64(written as u64);
+                                            l.push_str(" bytes");
+                                            l.flush(uart);
+                                            uart.write_line("NET: an ARP request went out on the wire — the host's capture decides whether it arrived");
+                                            // THE DESCRIPTOR THAT ACTUALLY WENT. A failed transmit shows the ring we meant to write; this shows the one
+                                            // the device used. Measured: the captured frame began 10 bytes into our buffer, so the window is the evidence.
+                                            let (d_addr, d_len, d_flags, a_flags, a_idx, a_ring0, _) = net::ring_snapshot();
+                                            let mut l = uart::LineBuf::new();
+                                            l.push_str("NET: sent — descriptor addr ");
+                                            l.push_hex(d_addr);
+                                            l.push_str(", len ");
+                                            l.push_u64(d_len as u64);
+                                            l.push_str(", flags ");
+                                            l.push_u64(d_flags as u64);
+                                            l.push_str("; avail idx ");
+                                            l.push_u64(a_idx as u64);
+                                            l.push_str(", ring[0] ");
+                                            l.push_u64(a_ring0 as u64);
+                                            l.push_str(", flags ");
+                                            l.push_u64(a_flags as u64);
+                                            l.flush(&uart);
+                                        }
+                                        Err(e) => {
+                                            uart.write_line(e);
+                                            let (addr, len, flags, aflags, aidx, aring0, _) = net::ring_snapshot();
+                                            let mut l = uart::LineBuf::new();
+                                            l.push_str("NET: ring read back — desc.addr ");
+                                            l.push_hex(addr);
+                                            l.push_str(", len ");
+                                            l.push_u64(len as u64);
+                                            l.push_str(", flags ");
+                                            l.push_u64(flags as u64);
+                                            l.push_str("; avail.flags ");
+                                            l.push_u64(aflags as u64);
+                                            l.push_str(", idx ");
+                                            l.push_u64(aidx as u64);
+                                            l.push_str(", ring[0] ");
+                                            l.push_u64(aring0 as u64);
+                                            l.flush(&uart);
+                                            // WHAT DOES THE DEVICE THINK? A queue the device refused and a queue it never
+                                            // read look identical from the outside - both are a timeout. The status
+                                            // register tells them apart: bit 6 is DEVICE_NEEDS_RESET, and the PFN
+                                            // readback says whether our page frame landed at all.
+                                            // SAFETY: inside the window the firmware described.
+                                            let (status, pfn, qnum) = unsafe {
+                                                (
+                                                    core::ptr::read_volatile((w + 0x070) as *const u32),
+                                                    core::ptr::read_volatile((w + 0x040) as *const u32),
+                                                    core::ptr::read_volatile((w + 0x038) as *const u32),
+                                                )
+                                            };
+                                            let mut l = uart::LineBuf::new();
+                                            l.push_str("NET: after the kick — status 0x");
+                                            l.push_hex(status as u64);
+                                            l.push_str(", QueuePFN 0x");
+                                            l.push_hex(pfn as u64);
+                                            l.push_str(", QueueNum ");
+                                            l.push_u64(qnum as u64);
+                                            l.flush(&uart);
+                                        }
+                                    }
+                                }
+                                Err(e) => uart.write_line(e),
+                            }
+                        }
+                        if final_status & 0x0f == 0x0f {
+                            uart.write_line("NET: the device acknowledged the driver and is ready — a driver exists, not yet a frame");
+                        } else {
+                            uart.write_line("NET: FAIL the device did not reach DRIVER_OK");
+                        }
+                    }
+                }
+                None => uart.write_line("NET: no virtio-net among the windows scanned"),
+            }
+        }
+else {
                 uart.write_line("FDT: the tree DISAGREES with the constant — the tree is right");
             }
         }
