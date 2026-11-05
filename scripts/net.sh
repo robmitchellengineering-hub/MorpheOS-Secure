@@ -232,6 +232,7 @@ print(found)
 PYENG
 )
 ENGINE_RTP=${ENGINE_RTP:-0}
+echo "DEBUG ENGINE_RTP=$ENGINE_RTP" >&2
 
 # THE LOADED PROGRAM'S DATAGRAM. The API-surface rung sends a UDP datagram whose payload is MORPHEOS-SVC. It must be on
 # the wire with a CORRECT checksum — the same arithmetic the demo datagram proved, but carrying the loaded program's own
