@@ -30,8 +30,13 @@ pub fn packet(
     let mut rtp = [0u8; 12 + PAYLOAD_BYTES];
     rtp[0] = 0x80; // V=2
     rtp[1] = PAYLOAD_TYPE;
-    rtp[2] = (seq >> 8) as u8;
-    rtp[3] = seq as u8;
+    if cfg!(feature = "rtp-mutant-frozen-seq") {
+        rtp[2] = 0;
+        rtp[3] = 0; // the mutation: the stream never advances
+    } else {
+        rtp[2] = (seq >> 8) as u8;
+        rtp[3] = seq as u8;
+    }
     rtp[4] = (timestamp >> 24) as u8;
     rtp[5] = (timestamp >> 16) as u8;
     rtp[6] = (timestamp >> 8) as u8;
@@ -70,8 +75,5 @@ pub fn parse(frame: &[u8]) -> Option<Seen> {
         | ((frame[rtp + 5] as u32) << 16)
         | ((frame[rtp + 6] as u32) << 8)
         | frame[rtp + 7] as u32;
-    if cfg!(feature = "rtp-mutant-frozen-seq") {
-        return Some(Seen { seq: 0, timestamp });
-    }
     Some(Seen { seq, timestamp })
 }
