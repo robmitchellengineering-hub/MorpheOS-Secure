@@ -11,6 +11,7 @@
 //! addresses plus `QueueReady`). Both were measured against QEMU and both behave identically once the queue is right.
 
 const DESC_SIZE: usize = 16;
+const QUEUE_NUM: usize = 64;
 const AVAIL_OFF: usize = 0x1000;
 const USED_OFF: usize = 0x2000;
 
@@ -46,7 +47,7 @@ pub fn start_queue(dev: &Device) -> Result<(), &'static str> {
         // descriptor, length, flags and available index all correct, offered to queue 0, is never completed, because a
         // receive queue is not where a frame goes out. The ring was right all along; the queue was wrong.
         wr(dev.base, 0x030, 1); // QueueSel = 1, the transmit queue
-        let max = (rd(dev.base, 0x034) as u16).min(8);
+        let max = (rd(dev.base, 0x034) as u16).min(QUEUE_NUM as u16);
         if max == 0 {
             return Err("the device offers no queue");
         }
@@ -123,7 +124,7 @@ pub fn transmit(dev: &Device, frame: &[u8]) -> Result<u32, &'static str> {
         // ring[(idx-1) % QueueNum] = descriptor head. Measured: writing ring[0] every time worked only until the ring
         // wrapped — the device reads the slot for ITS index, and after 8 frames it read a stale slot. The 14th frame
         // completed with len 0 for exactly this reason.
-        let ring_slot = (my_idx.wrapping_sub(1) as usize) % 8;
+        let ring_slot = (my_idx.wrapping_sub(1) as usize) % QUEUE_NUM;
         core::ptr::write_volatile((avail as *mut u16).add(2 + ring_slot), 0);
 
         // Kick the transmit queue, then wait for the completion that matches THIS index.
@@ -133,7 +134,7 @@ pub fn transmit(dev: &Device, frame: &[u8]) -> Result<u32, &'static str> {
         loop {
             let used_idx = core::ptr::read_volatile((used as *const u16).add(1));
             if used_idx >= my_idx {
-                let slot = (my_idx.wrapping_sub(1) as usize) % 8;
+                let slot = (my_idx.wrapping_sub(1) as usize) % QUEUE_NUM;
                 let entry = used.add(4 + slot * 8);
                 let written = core::ptr::read_volatile((entry as *const u32).add(1));
                 return Ok(written);
@@ -171,7 +172,7 @@ pub fn used_snapshot() -> (u16, u32, u32) {
         let rings = &raw const RINGS as *const u8;
         let used = rings.add(USED_OFF);
         let idx = core::ptr::read_volatile((used as *const u16).add(1));
-        let slot = (idx.wrapping_sub(1) as usize) % 8;
+        let slot = (idx.wrapping_sub(1) as usize) % QUEUE_NUM;
         let entry = used.add(4 + slot * 8);
         let id = core::ptr::read_volatile(entry as *const u32);
         let len = core::ptr::read_volatile((entry as *const u32).add(1));
