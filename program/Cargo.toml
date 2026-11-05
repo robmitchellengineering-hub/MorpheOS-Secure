@@ -1,0 +1,14 @@
+[package]
+name = "morph-program"
+version = "0.0.1"
+edition = "2024"
+description = "A real compiled loadable program for the Core's loader: four syscalls and a return."
+
+[[bin]]
+name = "morph-program"
+path = "src/main.rs"
+
+[dependencies]
+
+[profile.release]
+panic = "abort"
