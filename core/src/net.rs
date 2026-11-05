@@ -55,8 +55,25 @@ pub fn start_queue(dev: &Device) -> Result<(), &'static str> {
         for i in 0..0x3000 {
             core::ptr::write_volatile(rings.add(i), 0);
         }
-        let pfn = (rings as usize) / 4096;
-        wr(dev.base, 0x040, pfn as u32); // QueuePFN: where the rings live
+        let version = rd(dev.base, 0x004);
+        if version >= 2 {
+            // MODERN: the three rings are named separately and the queue is not live until QueueReady is set.
+            // Measured: the same device reports version 2 with `force-legacy=false`, and writing the legacy page frame
+            // to it does nothing at all — which is exactly the silence that cost rounds on the legacy path.
+            let desc = rings as u64;
+            let avail = (rings as u64) + AVAIL_OFF as u64;
+            let used = (rings as u64) + USED_OFF as u64;
+            wr(dev.base, 0x080, desc as u32);
+            wr(dev.base, 0x084, (desc >> 32) as u32);
+            wr(dev.base, 0x090, avail as u32);
+            wr(dev.base, 0x094, (avail >> 32) as u32);
+            wr(dev.base, 0x0a0, used as u32);
+            wr(dev.base, 0x0a4, (used >> 32) as u32);
+            wr(dev.base, 0x044, 1); // QueueReady
+        } else {
+            let pfn = (rings as usize) / 4096;
+            wr(dev.base, 0x040, pfn as u32); // QueuePFN: where the rings live
+        }
         Ok(())
     }
 }
