@@ -19,6 +19,8 @@ ELF="$WORK/target/aarch64-unknown-none/release/morph-core"
 LOG="$WORK/serial.log"; mkdir -p "$WORK"; rm -f "$LOG"
 # a 64 MiB disk for the block device; created once so the drive exists to be read
 truncate -s 64M "$WORK/disk.img" 2>/dev/null || dd if=/dev/zero of="$WORK/disk.img" bs=1M count=64 2>/dev/null
+# a known signature at sector 0, so the Core's read round-trips something it did not write
+printf 'MORPHEOS' | dd of="$WORK/disk.img" bs=1 count=8 conv=notrunc 2>/dev/null
 # THE IMAGE PATH: a bare ELF gets no device tree in x0 (measured: x0 == 0), so this gate converts the same binary to an
 # arm64 Image and boots THAT. The header is in the source; objcopy makes the flat image the firmware protocol expects.
 IMG="$WORK/morph-core.img"
@@ -79,3 +81,7 @@ fi
 grep -qF "FDT: FAIL" "$LOG" && { echo "FAIL: the Core reported its own failure" >&2; exit 1; }
 grep -qF "$AGREE" "$LOG" || { echo "FAIL: the device tree did not agree with the constant this boot uses" >&2; exit 1; }
 echo "ok: the UART's address was read from the firmware's device tree, and it matches what the boot uses"
+# STORAGE. The block device's capacity was read, and sector 0 must round-trip the signature the gate wrote: the Core
+# reads bytes it did not write, which is the difference between a driver and a printed constant.
+grep -qF "4d 4f 52 50 48 45 4f 53" "$LOG" || { echo "FAIL: sector 0 did not round-trip the MORPHEOS signature" >&2; exit 1; }
+echo "ok: the Core read sector 0 and got back the signature the disk was written with"
