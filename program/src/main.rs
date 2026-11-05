@@ -29,22 +29,26 @@ unsafe impl GlobalAlloc for CoreAlloc {
         }
         let size = layout.size().max(1);
         let mut ret: u64;
-        asm!(
-            "svc #0",
-            inout("x0") 5u64 => ret,
-            in("x1") size as u64,
-            options(nostack)
-        );
+        unsafe {
+            asm!(
+                "svc #0",
+                inout("x0") 5u64 => ret,
+                in("x1") size as u64,
+                options(nostack)
+            );
+        }
         ret as *mut u8
     }
 
     unsafe fn dealloc(&self, ptr: *mut u8, _layout: Layout) {
-        asm!(
-            "svc #0",
-            inout("x0") 6u64 => _,
-            in("x1") ptr as u64,
-            options(nostack)
-        );
+        unsafe {
+            asm!(
+                "svc #0",
+                inout("x0") 6u64 => _,
+                in("x1") ptr as u64,
+                options(nostack)
+            );
+        }
     }
 }
 
