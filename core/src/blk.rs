@@ -119,3 +119,60 @@ pub fn read_sector(dev: &Blk, sector: u64, out: &mut [u8; 512]) -> Result<u8, &'
         }
     }
 }
+
+/// Write one 512-byte sector. The same chain, but type 1 (OUT) and the data buffer is DEVICE-READABLE — the device
+/// reads our bytes and writes them to the medium.
+pub fn write_sector(dev: &Blk, sector: u64, data: &[u8; 512]) -> Result<u8, &'static str> {
+    unsafe {
+        static mut AVAIL_IDX: u16 = 0;
+
+        for i in 0..8 {
+            (core::ptr::addr_of_mut!(REQUEST) as *mut u8).add(i).write_volatile(0);
+        }
+        core::ptr::write_volatile((core::ptr::addr_of_mut!(REQUEST) as *mut u32), 1); // type = 1 (OUT/write)
+        for i in 0..8 {
+            core::ptr::write_volatile((core::ptr::addr_of_mut!(REQUEST) as *mut u8).add(8 + i), ((sector >> (8 * i)) & 0xff) as u8);
+        }
+
+        let rings = &raw mut RINGS as *mut u8;
+        let desc = rings;
+        core::ptr::write_volatile(desc as *mut u64, (&raw mut REQUEST as *mut u8) as u64);
+        core::ptr::write_volatile((desc as *mut u32).add(2), 16);
+        core::ptr::write_volatile((desc as *mut u16).add(6), 1); // NEXT
+        core::ptr::write_volatile((desc as *mut u16).add(7), 1);
+        let d1 = desc.add(16);
+        core::ptr::write_volatile(d1 as *mut u64, (data.as_ptr()) as u64);
+        core::ptr::write_volatile((d1 as *mut u32).add(2), 512);
+        core::ptr::write_volatile((d1 as *mut u16).add(6), 1); // NEXT, device reads
+        core::ptr::write_volatile((d1 as *mut u16).add(7), 2);
+        let d2 = desc.add(32);
+        core::ptr::write_volatile(d2 as *mut u64, (&raw mut STATUS as *mut u8) as u64);
+        core::ptr::write_volatile((d2 as *mut u32).add(2), 1);
+        core::ptr::write_volatile((d2 as *mut u16).add(6), 2); // WRITE
+        core::ptr::write_volatile((d2 as *mut u16).add(7), 0);
+
+        AVAIL_IDX = AVAIL_IDX.wrapping_add(1);
+        if AVAIL_IDX == 0 {
+            AVAIL_IDX = 1;
+        }
+        let avail = rings.add(AVAIL_OFF);
+        core::ptr::write_volatile(avail as *mut u16, 0);
+        core::ptr::write_volatile((avail as *mut u16).add(1), AVAIL_IDX);
+        core::ptr::write_volatile((avail as *mut u16).add(2), 0);
+
+        wr(dev.base, 0x050, 0);
+
+        let used = rings.add(USED_OFF);
+        let mut spins = 0u32;
+        loop {
+            let used_idx = core::ptr::read_volatile((used as *const u16).add(1));
+            if used_idx >= AVAIL_IDX {
+                return Ok(core::ptr::read_volatile(&raw const STATUS as *const u8));
+            }
+            spins += 1;
+            if spins > 10_000_000 {
+                return Err("the device never completed the write");
+            }
+        }
+    }
+}

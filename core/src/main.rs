@@ -498,6 +498,26 @@ fn fdt_demo(uart: &Uart) {
                                         l.push_byte(h[(*b & 0xf) as usize]);
                                     }
                                     l.flush(&uart);
+                                    // THE WRITE, AND ITS PROOF. Write a signature the Core chooses, read the sector back, and see the same bytes.
+                                    let mut wdata = [0u8; 512];
+                                    for (n, b) in b"CORE-WR1".iter().enumerate() { wdata[n] = *b; }
+                                    match blk::write_sector(&blk, 1, &wdata) {
+                                        Ok(0) => {
+                                            let mut back = [0u8; 512];
+                                            match blk::read_sector(&blk, 1, &mut back) {
+                                                Ok(0) => {
+                                                    let mut l = uart::LineBuf::new();
+                                                    l.push_str("BLK: wrote and read back sector 1: ");
+                                                    for b in &back[..8] {
+                                                        if *b >= 0x20 && *b < 0x7f { l.push_byte(*b); } else { l.push_str("."); }
+                                                    }
+                                                    l.flush(&uart);
+                                                }
+                                                _ => uart.write_line("BLK: read-back after write failed"),
+                                            }
+                                        }
+                                        _ => uart.write_line("BLK: the write returned a non-zero status"),
+                                    }
                                 }
                                 Ok(st) => { let mut l = uart::LineBuf::new(); l.push_str("BLK: read returned status "); l.push_u64(st as u64); l.flush(&uart); }
                                 Err(e) => uart.write_line(e),
