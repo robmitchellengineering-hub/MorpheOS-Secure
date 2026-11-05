@@ -1445,6 +1445,8 @@ pub extern "C" fn kmain() -> ! {
         let a0: u64; unsafe { core::arch::asm!("mrs {0}, icc_iar0_el1", out(reg) a0, options(nostack)) }; l.push_u64(a0);
         l.push_str(", IAR1=");
         let a1: u64; unsafe { core::arch::asm!("mrs {0}, icc_iar1_el1", out(reg) a1, options(nostack)) }; l.push_u64(a1);
+        l.push_str(", DAIF=");
+        let d: u64; unsafe { core::arch::asm!("mrs {0}, daif", out(reg) d, options(nostack)) }; l.push_u64(d);
         l.flush(&uart);
     }
     // SAFETY: mask interrupts again so the rest of the boot is deterministic.
