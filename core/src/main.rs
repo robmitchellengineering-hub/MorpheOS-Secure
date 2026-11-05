@@ -918,7 +918,7 @@ pub extern "C" fn svc_handler(frame: *mut u64) {
         let n = core::ptr::read_volatile(frame);
         let result = match n {
             0 => {
-                crate::uart::Uart::at(crate::uart::base()).write_line("SVC: the loaded program asked the Core for service");
+                crate::uart::Uart::at(crate::uart::UART_QEMU_VIRT).write_line("SVC: the loaded program asked the Core for service");
                 0
             }
             _ => u64::MAX, // unknown syscall: the caller sees an error, not a guess
