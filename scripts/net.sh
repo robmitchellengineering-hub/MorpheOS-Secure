@@ -259,7 +259,7 @@ while off + 16 <= len(d):
     if len(f) >= 73 and f[12:14] == bytes([8, 0]) and f[23] == 17 \
        and f[42] == 0x90 and f[50:54] == bytes([0xC0, 0xFF, 0xEE, 0x00]) \
        and f[54:56] == bytes([0xBE, 0xDE]) \
-       and f[70:73] == bytes([0x53, 0x43, 6]):
+       and f[70:73] == bytes([0x53, 0x43, 7]):
         found += 1
 print(found)
 PYSELF
@@ -339,6 +339,6 @@ fi
 echo "ok: the loaded program's RTP stream reached the wire (SSRC 0xC0FFEE00)"
 
 if [ "$SELFCHECK" -eq 0 ]; then
-    echo "FAIL: the program's RTP payload did not report 6/6 self-checks passed" >&2; exit 1
+    echo "FAIL: the program's RTP payload did not report 7/7 self-checks passed" >&2; exit 1
 fi
-echo "ok: the program's RTP payload reports 6/6 RTP self-checks passed — read off the capture"
+echo "ok: the program's RTP payload reports 7/7 RTP self-checks passed — read off the capture"

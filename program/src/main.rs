@@ -1,6 +1,10 @@
 #![no_std]
 #![no_main]
 
+extern crate alloc;
+
+use alloc::vec::Vec;
+use core::alloc::{GlobalAlloc, Layout};
 use core::arch::asm;
 use core::panic::PanicInfo;
 
@@ -8,6 +12,44 @@ use rob_core::rtp::{
     self, RobCore, RtpHeader, DEFAULT_ROB_EXT_ID, MODE_BIT_EXACT, MODE_REDUNDANCY, MODE_TEST,
     ROB_VERSION,
 };
+
+/// The program's heap, backed by the Core's own first-fit arena: `alloc` (5) and
+/// `dealloc` (6) hand a block over and take it back. The arena is the Core's;
+/// the program only ever borrows from it, which is the capability model's
+/// "no ambient authority" applied to memory.
+struct CoreAlloc;
+
+unsafe impl GlobalAlloc for CoreAlloc {
+    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        // The Core's first-fit arena aligns to 16 bytes; the engine's Vec/Box
+        // allocations never need more than 8, so 16 covers them. A request for
+        // a stricter alignment is refused rather than silently mis-aligned.
+        if layout.align() > 16 {
+            return core::ptr::null_mut();
+        }
+        let size = layout.size().max(1);
+        let mut ret: u64;
+        asm!(
+            "svc #0",
+            inout("x0") 5u64 => ret,
+            in("x1") size as u64,
+            options(nostack)
+        );
+        ret as *mut u8
+    }
+
+    unsafe fn dealloc(&self, ptr: *mut u8, _layout: Layout) {
+        asm!(
+            "svc #0",
+            inout("x0") 6u64 => _,
+            in("x1") ptr as u64,
+            options(nostack)
+        );
+    }
+}
+
+#[global_allocator]
+static ALLOC: CoreAlloc = CoreAlloc;
 
 #[panic_handler]
 fn panic(_: &PanicInfo) -> ! {
@@ -124,6 +166,17 @@ fn check_rtp_padding_is_removed() -> bool {
     p.payload == b"AB"
 }
 
+fn check_allocator() -> bool {
+    // The program's heap, backed by the Core's arena: allocate (with Vec growth,
+    // so several blocks), write, read back, and free on drop. A pass means the
+    // program has real memory the engine's Vec/Box can use.
+    let mut v: Vec<u32> = Vec::new();
+    for i in 0..64u32 {
+        v.push(i);
+    }
+    v.len() == 64 && v[0] == 0 && v[63] == 63 && v.iter().sum::<u32>() == 2016
+}
+
 fn run_self_checks() -> usize {
     let mut passed: usize = 0;
     if check_header_with_extension_round_trips() {
@@ -144,9 +197,12 @@ fn run_self_checks() -> usize {
     if check_rtp_padding_is_removed() {
         passed += 1;
     }
+    if check_allocator() {
+        passed += 1;
+    }
     if cfg!(feature = "selfcheck-mutant-wrong-count") {
         // The mutation: report one fewer than actually passed, so the gate's
-        // "6/6" check must go red.
+        // "7/7" check must go red.
         passed.saturating_sub(1)
     } else {
         passed

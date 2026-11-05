@@ -1109,6 +1109,38 @@ pub extern "C" fn svc_handler(frame: *mut u64) {
                     }
                 }
             }
+            5 => {
+                // alloc: hand the loaded program a block from the Core's own first-fit arena. x1 = size (bytes). The
+                // result is the payload pointer, or 0 when nothing fits — the program's #[global_allocator] maps 0 to a
+                // handle-alloc error. This is the difference between "the program has memory" and "the Core owns the
+                // memory it hands out": the arena is the Core's, and a loaded program only ever borrows from it.
+                let size = arg0 as usize;
+                if size == 0 || size > 256 * 1024 {
+                    uart.write_line("SVC: alloc refused — the size is not a request");
+                    0
+                } else {
+                    let p = ALLOCATOR.alloc_block(size);
+                    if p.is_null() {
+                        uart.write_line("SVC: alloc refused — the arena has no block that fits");
+                        0
+                    } else {
+                        p as u64
+                    }
+                }
+            }
+            6 => {
+                // dealloc: return a block. The Core refuses a pointer whose header is not USED — the double-free guard
+                // the allocator's own rung proved. The result is 0 (returned) or u64::MAX (refused).
+                let ptr = arg0 as *mut u8;
+                if ptr.is_null() {
+                    0
+                } else if ALLOCATOR.free_block(ptr) {
+                    0
+                } else {
+                    uart.write_line("SVC: dealloc refused — the pointer is not a live allocation");
+                    u64::MAX
+                }
+            }
             _ => u64::MAX, // unknown syscall: the caller sees an error, not a guess
         };
         core::ptr::write_volatile(frame, result);
