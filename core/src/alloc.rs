@@ -22,18 +22,20 @@ use core::ptr;
 /// a default: growing it is a deliberate change, because memory the Core hands out is memory the Core owns.
 const ARENA_SIZE: usize = 640 * 1024;
 
-#[repr(align(16))]
+#[repr(align(128))]
 struct Arena([u8; ARENA_SIZE]);
 
 static mut ARENA: Arena = Arena([0; ARENA_SIZE]);
 
 /// The header every allocation carries. `magic` is what makes a double free detectable; `size` is what makes `free`
-/// possible without the caller repeating the layout.
+/// possible without the caller repeating the layout. The header is padded to 128 bytes so the payload that follows it
+/// is 128-aligned (rtrb's CachePadded — inside the engine's Arc<RingBuffer> — is 128-aligned on aarch64).
 #[repr(C)]
 struct Header {
     magic: u64,
     size: usize,
     next: *mut Header,
+    _pad: [u8; 104],
 }
 
 const USED: u64 = 0x4d4f5250_48454f53; // "MORPHEOS" — a magic that is not zero, so zeroed memory is not "used".
@@ -90,7 +92,10 @@ impl FirstFit {
     /// plus a useful allocation, and return the payload pointer.
     pub unsafe fn alloc_block(&self, size: usize) -> *mut u8 {
         let st = self.state();
-        let want = align_up(size.max(1), 16);
+        // 128-byte alignment: rtrb's CachePadded (used inside the engine's
+        // Arc<RingBuffer>) is 128-aligned on aarch64, so every allocation must
+        // satisfy that ceiling.
+        let want = align_up(size.max(1), 128);
         let mut cursor = unsafe { (*st).head };
         let mut prev: *mut Header = ptr::null_mut();
         while !cursor.is_null() {
@@ -101,7 +106,7 @@ impl FirstFit {
             // skipped by the next 32-byte allocation.
             if node.magic == FREE && node.size >= want {
                 let remainder = node.size - want - HEADER;
-                if remainder >= HEADER + 16 {
+                if remainder >= 128 {
                     // Split: the tail becomes a new free block.
                     // SAFETY: `remainder` bytes were verified to be inside this block.
                     let split = unsafe { (cursor.cast::<u8>().add(HEADER + want)).cast::<Header>() };
