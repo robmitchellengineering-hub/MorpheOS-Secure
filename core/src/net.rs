@@ -83,19 +83,28 @@ pub fn start_queue(dev: &Device) -> Result<(), &'static str> {
 
 /// Send one frame. The buffer is reused, so the caller's bytes must fit in 64.
 pub fn transmit(dev: &Device, frame: &[u8]) -> Result<u32, &'static str> {
-    if frame.len() > 64 {
+    if frame.len() + 10 > 64 {
         return Err("frame too large for this milestone's buffer");
     }
     unsafe {
         let rings = &raw mut RINGS as *mut u8;
         let buf = &raw mut FRAME as *mut u8;
+        // EVERY virtio-net TX BUFFER STARTS WITH A 10-BYTE HEADER. Measured the hard way: a 42-byte buffer holding the
+        // Ethernet frame arrived on the wire as 32 bytes beginning at our byte 10 — because the device consumed the
+        // first ten as `struct virtio_net_hdr` (flags, gso, csum fields) and sent what followed. The ring was correct
+        // throughout; the buffer's first ten bytes were being spent on a header the device required and we had not
+        // written. Here it is written explicitly, zeroed, and the frame starts after it.
+        const NET_HDR: usize = 10;
+        for i in 0..NET_HDR {
+            core::ptr::write_volatile(buf.add(i), 0);
+        }
         for (i, b) in frame.iter().enumerate() {
-            core::ptr::write_volatile(buf.add(i), *b);
+            core::ptr::write_volatile(buf.add(NET_HDR + i), *b);
         }
         // Descriptor 0: the buffer, its length, no chaining.
         let desc = rings;
         core::ptr::write_volatile(desc as *mut u64, buf as u64);
-        core::ptr::write_volatile((desc as *mut u32).add(2), frame.len() as u32);
+        core::ptr::write_volatile((desc as *mut u32).add(2), (NET_HDR + frame.len()) as u32);
         core::ptr::write_volatile((desc as *mut u16).add(6), 0); // flags
         core::ptr::write_volatile((desc as *mut u16).add(7), 0); // next
         // Available ring: flags, idx, ring[0] = descriptor 0.
