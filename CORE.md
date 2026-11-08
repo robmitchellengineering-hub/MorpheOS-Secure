@@ -22,8 +22,7 @@ MORPHEOS-CORE 0.0.1: the Core is running on aarch64; no Linux, no syscalls, no p
 MORPHEOS-CORE: reported; halting
 ```
 
-and `scripts/m0.sh --self-test` goes red on a deliberately wrong banner, so the gate is not theatre. **What is not
-done: no capability space (M1), no ledger (M2), no Pi 5 hardware, no MMU, no GIC, no timers.**
+and `scripts/m0.sh --self-test` goes red on a deliberately wrong banner, so the gate is not theatre.
 
 **The machine is a Raspberry Pi 5** — AArch64, Cortex-A76. That decides the architecture of everything here: no
 real mode, no multiboot, no long-mode switch; the firmware or EDK2 UEFI hands over an AArch64 image and the Core

@@ -12,11 +12,13 @@ Rob, on what this is: *"a new type of computer with the original ultimate secure
 what it is not: *"I dont want to build another windows … the whole point is the operating system reimagined …
 we are meant to be reinventing the wheel here so we have a hover board not rehashing existing shit."*
 
-## The one true sentence about the Core
+## The state of the Core
 
-**No line of the Core exists yet.** There is no source tree, no boot, no capability model. What exists is the
-scope, the first rung, and the acceptance tests that will decide whether it is real — all in
-[CORE.md](CORE.md). Any claim beyond that sentence is not yet true.
+**The Core exists as code, and it boots.** `core/` is a real Rust source tree (`morph-core`), and rungs M0–M5b are
+green and merged — measured on studio-linux2 (2026-11-04): it boots on AArch64 QEMU with no Linux underneath (M0),
+hands out capabilities (M1), keeps the ledger (M2), allocates (M2b), owns its MMU (M3a), runs tasks (M4a–M4c), and
+counts and is interrupted by its clock (M5a–M5b). The rung-by-rung record, and what is still not done, is
+[CORE.md](CORE.md). Any claim beyond those rungs is not yet true.
 
 What *does* exist, and is carried here, is everything a secure Core has to satisfy:
 
@@ -57,5 +59,6 @@ has tried and failed against, or it says plainly that it has not been tried. `UN
 
 ## The state of the repo today
 
-Documents, the arm's plan, the attacks, and the design set for what the Core must prove. No Core code, no
-image, no artefact. The first rung that would change that is M0, in [CORE.md](CORE.md).
+The Core source tree (`core/`), the loader (`loader/`), and rungs M0–M5b green and merged, each with its falsifier
+proven able to fail. Still not done: no scheduler or preemption, no certificates (M7a–M7d), no network, no storage,
+no Pi 5 hardware — so AirMatrix cannot run on this machine yet. The rung-by-rung record is [CORE.md](CORE.md).
