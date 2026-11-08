@@ -61,6 +61,10 @@ pub const X: Gate = gate(C64::ZERO, C64::ONE, C64::ONE, C64::ZERO);
 pub const Y: Gate = gate(C64::ZERO, C64 { re: 0.0, im: -1.0 }, C64::I, C64::ZERO);
 /// Pauli-Z (phase flip).
 pub const Z: Gate = gate(C64::ONE, C64::ZERO, C64::ZERO, C64 { re: -1.0, im: 0.0 });
+/// Phase gate (S).
+pub const S: Gate = gate(C64::ONE, C64::ZERO, C64::ZERO, C64::I);
+/// T gate (π/4 phase).
+pub const T: Gate = gate(C64::ONE, C64::ZERO, C64::ZERO, C64 { re: INV_SQRT2, im: INV_SQRT2 });
 
 /// A general n-qubit circuit with a state-vector backend. Qubit 0 is the least-significant bit.
 pub struct Circuit {
@@ -104,6 +108,18 @@ impl Circuit {
         self.state = next;
     }
 
+    /// Controlled phase: multiply the |11⟩ amplitude on (control,target) by `phase`.
+    pub fn apply_cphase(&mut self, control: usize, target: usize, phase: C64) {
+        assert!(control < self.n && target < self.n && control != target);
+        let cmask = 1usize << control;
+        let tmask = 1usize << target;
+        for i in 0..self.state.len() {
+            if i & cmask != 0 && i & tmask != 0 {
+                self.state[i] = self.state[i].mul(phase);
+            }
+        }
+    }
+
     /// The |amplitude|^2 distribution, normalized (deterministic — no RNG in no_std).
     pub fn probabilities(&self) -> Vec<f64> {
         let mut p: Vec<f64> = self.state.iter().map(|a| a.norm_sq()).collect();
@@ -122,6 +138,40 @@ pub fn bell() -> Circuit {
     let mut c = Circuit::new(2);
     c.apply_gate(&H, 0);
     c.apply_cnot(0, 1);
+    c
+}
+
+/// The GHZ state (|0…0⟩ + |1…1⟩)/√2 — n-qubit entanglement, measured all-equal.
+pub fn ghz(n: usize) -> Circuit {
+    let mut c = Circuit::new(n);
+    c.apply_gate(&H, 0);
+    for q in 1..n {
+        c.apply_cnot(0, q);
+    }
+    c
+}
+
+/// Grover's search on 2 qubits (4 items) for the marked state |11⟩.
+pub fn grover() -> Circuit {
+    let mut c = Circuit::new(2);
+    c.apply_gate(&H, 0);
+    c.apply_gate(&H, 1);
+    // oracle: CZ (phase-flip |11⟩)
+    c.apply_gate(&H, 1);
+    c.apply_cnot(0, 1);
+    c.apply_gate(&H, 1);
+    // diffusion: H X⊗X CZ X⊗X H (reflect about the mean)
+    c.apply_gate(&H, 0);
+    c.apply_gate(&H, 1);
+    c.apply_gate(&X, 0);
+    c.apply_gate(&X, 1);
+    c.apply_gate(&H, 1);
+    c.apply_cnot(0, 1);
+    c.apply_gate(&H, 1);
+    c.apply_gate(&X, 0);
+    c.apply_gate(&X, 1);
+    c.apply_gate(&H, 0);
+    c.apply_gate(&H, 1);
     c
 }
 
@@ -151,5 +201,19 @@ mod tests {
         c.apply_gate(&H, 0);
         let p = c.probabilities();
         assert!((p[0] - 0.5).abs() < 1e-12 && (p[1] - 0.5).abs() < 1e-12);
+    }
+
+    #[test]
+    fn ghz_is_all_equal() {
+        let p = ghz(3).probabilities();
+        assert!((p[0] - 0.5).abs() < 1e-12, "|000> = {}", p[0]);
+        assert!((p[7] - 0.5).abs() < 1e-12, "|111> = {}", p[7]);
+        assert!(p[1..7].iter().all(|&x| x.abs() < 1e-12));
+    }
+
+    #[test]
+    fn grover_finds_the_marked_item() {
+        let p = grover().probabilities();
+        assert!((p[3] - 1.0).abs() < 1e-12, "|11> = {}", p[3]);
     }
 }
