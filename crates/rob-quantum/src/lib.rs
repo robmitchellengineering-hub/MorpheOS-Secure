@@ -209,6 +209,25 @@ pub const BELL_CLAIM: QuantumClaim = QuantumClaim {
     ],
 };
 
+/// A certified quantum run: the checked distribution plus the measured outcome, ready to submit to
+/// the ledger. The seed names the draw, so the run is reproducible.
+pub struct CertifiedRun {
+    pub circuit: &'static str,
+    pub seed: u64,
+    pub outcome: usize,
+    pub probabilities: Vec<f64>,
+}
+
+/// Run the circuit, check the claim against its distribution, and if it holds produce a
+/// `CertifiedRun` (the outcome sampled with `seed`). Refused with the claim's rejection otherwise.
+/// This is the quantum half of the integration: the program proves, the Core records.
+pub fn certify(claim: &QuantumClaim, circuit: &Circuit, seed: u64) -> Result<CertifiedRun, Rejected> {
+    let p = circuit.probabilities();
+    claim.check(&p)?;
+    let outcome = circuit.measure_all(seed);
+    Ok(CertifiedRun { circuit: claim.circuit, seed, outcome, probabilities: p })
+}
+
 /// The Bell state (|00⟩ + |11⟩)/√2.
 pub fn bell() -> Circuit {
     let mut c = Circuit::new(2);
@@ -319,5 +338,19 @@ mod tests {
     fn a_non_normalized_distribution_is_refused() {
         let p = [1.0, 0.0, 0.0, 1.0]; // sums to 2
         assert!(matches!(BELL_CLAIM.check(&p), Err(Rejected::NotNormalized)));
+    }
+
+    #[test]
+    fn certify_produces_a_run_for_a_holding_claim() {
+        let run = certify(&GROVER_CLAIM, &grover(), 0).unwrap();
+        assert_eq!(run.circuit, "grover");
+        assert_eq!(run.outcome, 3); // |11>
+    }
+
+    #[test]
+    fn certify_refuses_a_violated_claim() {
+        let mut c = Circuit::new(2);
+        c.apply_gate(&X, 0); // |01> — Bell's |00>=1/2 bound is violated
+        assert!(certify(&BELL_CLAIM, &c, 0).is_err());
     }
 }
