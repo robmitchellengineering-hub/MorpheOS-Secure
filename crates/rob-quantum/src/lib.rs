@@ -139,7 +139,7 @@ impl Circuit {
     /// machine. (A nondeterministic sampler is a thin layer on top, fed entropy by the Core.)
     pub fn measure_all(&self, seed: u64) -> usize {
         let p = self.probabilities();
-        let r = (seed as f64) / (u64::MAX as f64); // uniform in [0, 1)
+        let r = (seed >> 11) as f64 / (1u64 << 53) as f64; // uniform in [0, 1)
         let mut acc = 0.0;
         for (i, pi) in p.iter().enumerate() {
             acc += pi;
@@ -148,6 +148,35 @@ impl Circuit {
             }
         }
         p.len() - 1
+    }
+
+    /// Measure one qubit: collapse the state onto the outcome (seeded, deterministic) and return it.
+    /// This is the primitive teleportation and QEC need — a partial measurement, not a full one.
+    ///
+    /// The state is left scaled by the outcome's probability; `probabilities()` renormalizes, so the
+    /// observable distribution is correct either way (no `sqrt` needed in no_std).
+    pub fn measure_qubit(&mut self, target: usize, seed: u64) -> usize {
+        assert!(target < self.n);
+        let mask = 1usize << target;
+        let mut p0 = 0.0;
+        let mut p1 = 0.0;
+        for i in 0..self.state.len() {
+            let n = self.state[i].norm_sq();
+            if i & mask != 0 {
+                p1 += n;
+            } else {
+                p0 += n;
+            }
+        }
+        let total = p0 + p1;
+        let r = (seed >> 11) as f64 / (1u64 << 53) as f64; // uniform in [0, 1)
+        let outcome = if r < p1 / total { 1 } else { 0 };
+        for i in 0..self.state.len() {
+            if usize::from(i & mask != 0) != outcome {
+                self.state[i] = C64::ZERO;
+            }
+        }
+        outcome
     }
 }
 
@@ -384,6 +413,18 @@ mod tests {
         let p = qft(2).probabilities();
         for pi in &p {
             assert!((pi - 0.25).abs() < 1e-12, "uniform expected, got {pi}");
+        }
+    }
+
+    #[test]
+    fn measure_qubit_on_a_deterministic_state() {
+        for seed in [0, 1, 42, u64::MAX] {
+            let mut c = Circuit::new(2);
+            c.apply_gate(&X, 0); // |1> on qubit 0
+            assert_eq!(c.measure_qubit(0, seed), 1, "seed {seed}");
+            let p = c.probabilities();
+            let p_q0_1 = p[1] + p[3]; // bit0 = 1
+            assert!((p_q0_1 - 1.0).abs() < 1e-12, "collapse wrong");
         }
     }
 }
