@@ -11,7 +11,8 @@ everyday version, it was already working on hardware and is a different project.
 3. **The Core is its own thing.** [CORE.md](CORE.md) is its scope. A design question answered with
    "because Linux/Unix/NT does it that way" is not answered.
 4. **Nothing is claimed before its rung has run.** M0–M5 in [CORE.md](CORE.md) are rungs, not milestones to
-   announce. Today the only true sentence about the Core is that no line of it exists.
+   announce. The rungs that have run are the ones CORE.md records green — today M0–M5b — and nothing beyond them
+   is claimed.
 5. **Drivers are a compatibility device, not a project.** Foreign drivers are hosted in isolated boxes; the Core
    trusts a driver not to escape, never to be correct.
 6. **One worktree per session, and stage explicit paths.** A blanket stage of every changed file in a shared
