@@ -324,6 +324,37 @@ pub fn qft(n: usize) -> Circuit {
     c
 }
 
+/// Teleport |1⟩ from qubit 0 to qubit 2 through a Bell pair, with Alice's measurement and Bob's
+/// conditional corrections. After the protocol, qubit 2 is |1⟩ regardless of Alice's outcomes.
+pub fn teleport(seed: u64) -> Circuit {
+    let mut c = Circuit::new(3);
+    c.apply_gate(&X, 0);                       // |ψ⟩ = |1⟩
+    c.apply_gate(&H, 1);                       // Bell pair (|00⟩+|11⟩)/√2 on qubits 1,2
+    c.apply_cnot(1, 2);
+    c.apply_cnot(0, 1);                        // Alice entangles and measures
+    c.apply_gate(&H, 0);
+    let a = c.measure_qubit(0, seed);
+    let b = c.measure_qubit(1, seed.wrapping_add(1));
+    if b == 1 {
+        c.apply_gate(&X, 2);                   // Bob's corrections
+    }
+    if a == 1 {
+        c.apply_gate(&Z, 2);
+    }
+    c
+}
+
+/// The 3-qubit repetition code: encode |1⟩ → |111⟩, flip qubit 1 (a single error), leaving |101⟩ —
+/// a majority vote then recovers the logical 1.
+pub fn qec_bitflip() -> Circuit {
+    let mut c = Circuit::new(3);
+    c.apply_gate(&X, 0);                       // logical |1⟩
+    c.apply_cnot(0, 1);                        // encode → |111⟩
+    c.apply_cnot(0, 2);
+    c.apply_gate(&X, 1);                       // one bit-flip error → |101⟩
+    c
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -426,5 +457,22 @@ mod tests {
             let p_q0_1 = p[1] + p[3]; // bit0 = 1
             assert!((p_q0_1 - 1.0).abs() < 1e-12, "collapse wrong");
         }
+    }
+
+    #[test]
+    fn teleport_moves_the_state() {
+        for seed in [0, 1, 42, u64::MAX] {
+            let p = teleport(seed).probabilities();
+            let p2: f64 = p.iter().enumerate()
+                .filter(|(i, _)| (i >> 2) & 1 == 1)
+                .map(|(_, &x)| x).sum();
+            assert!((p2 - 1.0).abs() < 1e-9, "seed {seed}: qubit 2 not |1>, p2={p2}");
+        }
+    }
+
+    #[test]
+    fn qec_detects_the_error() {
+        let p = qec_bitflip().probabilities();
+        assert!((p[5] - 1.0).abs() < 1e-12, "|101> expected, got {p:?}");
     }
 }
