@@ -151,6 +151,64 @@ impl Circuit {
     }
 }
 
+/// A falsifier bound on one probability: p[index] ∈ [min, max].
+#[derive(Clone, Copy, Debug)]
+pub struct Bound {
+    pub index: usize,
+    pub min: f64,
+    pub max: f64,
+}
+
+/// A quantum claim — a named circuit plus the falsifier bounds its distribution must satisfy.
+/// This is the "SEXTANT falsifier → certificate" translation (PLAN-quantum-path.md §3): a run is
+/// certified when its measured distribution satisfies every bound, and refused when one fails.
+pub struct QuantumClaim {
+    pub circuit: &'static str,
+    pub bounds: &'static [Bound],
+}
+
+/// The ways a quantum claim is refused.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum Rejected {
+    NotNormalized,
+    BoundViolated { index: usize, got: f64, min: f64, max: f64 },
+}
+
+impl QuantumClaim {
+    /// Check the claim against a probability distribution. No allocation, no floating point in a
+    /// *decision* beyond the tolerance the claim itself states.
+    pub fn check(&self, p: &[f64]) -> Result<(), Rejected> {
+        let total: f64 = p.iter().sum();
+        if (total - 1.0).abs() > 1e-9 {
+            return Err(Rejected::NotNormalized);
+        }
+        for b in self.bounds {
+            let got = p[b.index];
+            if got < b.min - 1e-12 || got > b.max + 1e-12 {
+                return Err(Rejected::BoundViolated { index: b.index, got, min: b.min, max: b.max });
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Grover's falsifier: the marked |11⟩ is found with probability 1.
+pub const GROVER_CLAIM: QuantumClaim = QuantumClaim {
+    circuit: "grover",
+    bounds: &[Bound { index: 3, min: 1.0 - 1e-9, max: 1.0 + 1e-9 }],
+};
+
+/// Bell's falsifier: |00⟩ and |11⟩ each 1/2, the cross terms 0.
+pub const BELL_CLAIM: QuantumClaim = QuantumClaim {
+    circuit: "bell",
+    bounds: &[
+        Bound { index: 0, min: 0.5 - 1e-9, max: 0.5 + 1e-9 },
+        Bound { index: 1, min: 0.0, max: 1e-9 },
+        Bound { index: 2, min: 0.0, max: 1e-9 },
+        Bound { index: 3, min: 0.5 - 1e-9, max: 0.5 + 1e-9 },
+    ],
+};
+
 /// The Bell state (|00⟩ + |11⟩)/√2.
 pub fn bell() -> Circuit {
     let mut c = Circuit::new(2);
@@ -242,5 +300,24 @@ mod tests {
         for seed in [0, 1, 42, u64::MAX] {
             assert_eq!(c.measure_all(seed), 1, "seed {seed}");
         }
+    }
+
+    #[test]
+    fn grover_and_bell_claims_hold() {
+        assert!(GROVER_CLAIM.check(&grover().probabilities()).is_ok());
+        assert!(BELL_CLAIM.check(&bell().probabilities()).is_ok());
+    }
+
+    #[test]
+    fn a_violated_bound_is_refused() {
+        // Bell's |00⟩ bound requires 0.5; a uniform 0.25/0.25/0.25/0.25 violates it.
+        let p = [0.25, 0.25, 0.25, 0.25];
+        assert!(matches!(BELL_CLAIM.check(&p), Err(Rejected::BoundViolated { index: 0, .. })));
+    }
+
+    #[test]
+    fn a_non_normalized_distribution_is_refused() {
+        let p = [1.0, 0.0, 0.0, 1.0]; // sums to 2
+        assert!(matches!(BELL_CLAIM.check(&p), Err(Rejected::NotNormalized)));
     }
 }
