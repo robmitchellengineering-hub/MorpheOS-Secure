@@ -1,0 +1,11 @@
+[package]
+name = "rob-quantum"
+version = "0.1.0"
+edition = "2024"
+description = "The quantum circuit model, no_std — the Rust port of pacland's quantum.py, to run as a Core task."
+license = "Apache-2.0"
+
+[dependencies]
+
+[lints.rust]
+unsafe_code = "forbid"
