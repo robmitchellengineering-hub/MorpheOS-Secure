@@ -131,6 +131,24 @@ impl Circuit {
         }
         p
     }
+
+    /// Sample one bitstring from the |amplitude|² distribution, seeded and deterministic.
+    ///
+    /// The seed is part of the certificate: a verifier re-runs with the same seed and checks the
+    /// same result, so "this run produced X" is reproducible rather than a measurement of one
+    /// machine. (A nondeterministic sampler is a thin layer on top, fed entropy by the Core.)
+    pub fn measure_all(&self, seed: u64) -> usize {
+        let p = self.probabilities();
+        let r = (seed as f64) / (u64::MAX as f64); // uniform in [0, 1)
+        let mut acc = 0.0;
+        for (i, pi) in p.iter().enumerate() {
+            acc += pi;
+            if r < acc {
+                return i;
+            }
+        }
+        p.len() - 1
+    }
 }
 
 /// The Bell state (|00⟩ + |11⟩)/√2.
@@ -215,5 +233,14 @@ mod tests {
     fn grover_finds_the_marked_item() {
         let p = grover().probabilities();
         assert!((p[3] - 1.0).abs() < 1e-12, "|11> = {}", p[3]);
+    }
+
+    #[test]
+    fn measurement_is_consistent_with_a_deterministic_state() {
+        let mut c = Circuit::new(1);
+        c.apply_gate(&X, 0); // |1>
+        for seed in [0, 1, 42, u64::MAX] {
+            assert_eq!(c.measure_all(seed), 1, "seed {seed}");
+        }
     }
 }
