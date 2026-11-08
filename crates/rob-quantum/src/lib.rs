@@ -178,6 +178,53 @@ impl Circuit {
         }
         outcome
     }
+
+    /// Controlled modular exponentiation (Shor's oracle, as a black box): map the `work` register
+    /// `w → w · a^x mod n`, controlled on the `control` register's value `x`. This is the hard piece
+    /// of Shor's period-finding; the oracle is a permutation, treated as a black box like Grover's.
+    pub fn apply_modular_exp(&mut self, control: &[usize], work: &[usize], a: u64, n: u64) {
+        let mut next = alloc::vec![C64::ZERO; self.state.len()];
+        for i in 0..self.state.len() {
+            let mut x = 0usize;
+            for (k, &q) in control.iter().enumerate() {
+                if (i >> q) & 1 == 1 {
+                    x |= 1 << k;
+                }
+            }
+            let mut w = 0usize;
+            for (k, &q) in work.iter().enumerate() {
+                if (i >> q) & 1 == 1 {
+                    w |= 1 << k;
+                }
+            }
+            let f = mod_pow(a, x as u64, n) as usize;
+            let w_new = (w * f) % (n as usize);
+            let mut j = i;
+            for (k, &q) in work.iter().enumerate() {
+                if (w_new >> k) & 1 == 1 {
+                    j |= 1 << q;
+                } else {
+                    j &= !(1 << q);
+                }
+            }
+            next[j] = self.state[i];
+        }
+        self.state = next;
+    }
+}
+
+/// Classical modular exponentiation by squaring: `a^e mod n`.
+fn mod_pow(mut a: u64, mut e: u64, n: u64) -> u64 {
+    let mut r = 1 % n;
+    a %= n;
+    while e > 0 {
+        if e & 1 == 1 {
+            r = (r * a) % n;
+        }
+        a = (a * a) % n;
+        e >>= 1;
+    }
+    r
 }
 
 /// A falsifier bound on one probability: p[index] ∈ [min, max].
@@ -474,5 +521,25 @@ mod tests {
     fn qec_detects_the_error() {
         let p = qec_bitflip().probabilities();
         assert!((p[5] - 1.0).abs() < 1e-12, "|101> expected, got {p:?}");
+    }
+
+    #[test]
+    fn mod_pow_has_the_right_period() {
+        assert_eq!(mod_pow(2, 0, 15), 1);
+        assert_eq!(mod_pow(2, 1, 15), 2);
+        assert_eq!(mod_pow(2, 2, 15), 4);
+        assert_eq!(mod_pow(2, 4, 15), 1); // r = 4
+    }
+
+    #[test]
+    fn modular_exp_maps_one_to_two() {
+        // control = |1> (qubit 4), work = |1> (qubit 0); a=2, n=15 → work = 2^1 mod 15 = 2
+        let mut c = Circuit::new(8);
+        c.apply_gate(&X, 0); // work = |1>
+        c.apply_gate(&X, 4); // control = |1>
+        c.apply_modular_exp(&[4, 5, 6, 7], &[0, 1, 2, 3], 2, 15);
+        let p = c.probabilities();
+        // new state: control=1 (bit4), work=2 (bit1) → index 16 + 2 = 18
+        assert!((p[18] - 1.0).abs() < 1e-12, "expected |x=1,w=2>, got {p:?}");
     }
 }
