@@ -270,6 +270,31 @@ pub fn grover() -> Circuit {
     c
 }
 
+/// The n-qubit quantum Fourier transform (the building block for Shor). Qubit 0 is least-significant.
+/// Phase angles are fixed constants (e^{iπ/2^k}), so no `libm` is needed; n ≤ 8 (Shor-15's range).
+pub fn qft(n: usize) -> Circuit {
+    // e^{iπ/2^k} for k = 1..=8
+    const PHASE: [C64; 8] = [
+        C64 { re: 0.0, im: 1.0 },                                                // k=1
+        C64 { re: INV_SQRT2, im: INV_SQRT2 },                                    // k=2
+        C64 { re: 0.923_879_532_511_286_7, im: 0.382_683_432_365_089_8 },        // k=3
+        C64 { re: 0.980_785_280_403_230_4, im: 0.195_090_322_016_128_25 },       // k=4
+        C64 { re: 0.995_184_726_672_196_9, im: 0.098_017_140_329_560_6 },        // k=5
+        C64 { re: 0.998_795_456_205_172_4, im: 0.049_067_674_327_418_015 },      // k=6
+        C64 { re: 0.999_698_818_696_204_2, im: 0.024_541_228_522_912_288 },      // k=7
+        C64 { re: 0.999_924_701_839_144_5, im: 0.012_271_538_285_719_925 },      // k=8
+    ];
+    let mut c = Circuit::new(n);
+    assert!(n <= PHASE.len() + 1, "QFT beyond the phase table");
+    for q in (0..n).rev() {
+        c.apply_gate(&H, q);
+        for t in 0..q {
+            c.apply_cphase(q, t, PHASE[q - t - 1]);
+        }
+    }
+    c
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -352,5 +377,13 @@ mod tests {
         let mut c = Circuit::new(2);
         c.apply_gate(&X, 0); // |01> — Bell's |00>=1/2 bound is violated
         assert!(certify(&BELL_CLAIM, &c, 0).is_err());
+    }
+
+    #[test]
+    fn qft2_of_zero_is_uniform() {
+        let p = qft(2).probabilities();
+        for pi in &p {
+            assert!((pi - 0.25).abs() < 1e-12, "uniform expected, got {pi}");
+        }
     }
 }
