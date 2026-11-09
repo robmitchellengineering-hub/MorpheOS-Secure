@@ -974,6 +974,11 @@ fn ab_demo(uart: &Uart) {
 /// The syscall dispatcher. The loaded program traps here via `svc`; x0 in the frame is the syscall number, and the
 /// result is written back into the saved x0 so RESTORE_ALL hands it to the caller. This is the API surface: the first
 /// call is `report` (0), which proves a loaded program can ask the Core for a service and read the answer.
+///
+/// The ledger is a static (M2's history is the machine, not a per-call scratch): every syscall that applies history
+/// appends to the same chain, so "each quantum run is a certified generation" accumulates rather than restarting.
+static mut LEDGER: Ledger = Ledger::empty();
+
 #[unsafe(no_mangle)]
 pub extern "C" fn svc_handler(frame: *mut u64) {
     unsafe {
@@ -997,7 +1002,7 @@ pub extern "C" fn svc_handler(frame: *mut u64) {
                     len: 3,
                     claimed_ppm: 350_000,
                 };
-                let mut ledger = Ledger::empty();
+                let ledger = &mut *core::ptr::addr_of_mut!(LEDGER);
                 match ledger.apply_certified(arg0, &cert) {
                     Ok((id, _ppm)) => {
                         let mut l = crate::uart::LineBuf::new();
@@ -1076,6 +1081,18 @@ pub extern "C" fn svc_handler(frame: *mut u64) {
                         }
                     }
                 }
+            }
+            7 => {
+                // apply: append a program-verified generation. The program has already checked its own claim (a quantum
+                // run's QuantumClaim::check in rob-quantum); the Core just records the result — the program proves, the
+                // Core records. No certificate here: the proof happened before the syscall.
+                let ledger = &mut *core::ptr::addr_of_mut!(LEDGER);
+                let id = ledger.apply(arg0);
+                let mut l = crate::uart::LineBuf::new();
+                l.push_str("SVC: applied generation ");
+                l.push_u64(id as u64);
+                l.flush(&uart);
+                id as u64
             }
             _ => u64::MAX, // unknown syscall: the caller sees an error, not a guess
         };
