@@ -20,6 +20,7 @@ mechanism AirMatrix's engine will use to reach the ledger, the scheduler and the
 | 1 | `apply_certified` | `x1` = payload | generation id | **proven** — the Core builds+checks a certificate, appends history |
 | 2 | `yield` | none | new-frame pointer | **next** — must mirror `irq_entry`: return the frame `sched::on_irq` chooses, and let `fault_entry` switch to it |
 | 3 | `send_udp` | `x1` = payload ptr, `x2` = len | bytes sent | **next** — needs the net device base + the ARP-learned gateway MAC threaded out of `fdt_demo` into statics |
+| 7 | `apply` | `x1` = payload | generation id | **wired** — append a program-verified generation: the program proved its own claim (a quantum run's `QuantumClaim::check`), the Core just records. The ledger is a static, so each run is a *new* generation in the same chain — the program proves, the Core records. |
 
 ## The two hard parts of the next two, stated
 
