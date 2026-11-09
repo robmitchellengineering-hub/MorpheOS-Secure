@@ -256,10 +256,14 @@ pub struct Bound {
 }
 
 /// A quantum claim — a named circuit plus the falsifier bounds its distribution must satisfy.
-/// This is the "SEXTANT falsifier → certificate" translation (PLAN-quantum-path.md §3): a run is
-/// certified when its measured distribution satisfies every bound, and refused when one fails.
+///
+/// `sextant` names the SEXTANT claim (in `MorpheOS/crates/morph-verify`) this circuit-level falsifier
+/// is an *instance of* — the theorem that backs it. The spine is one (D43): SEXTANT holds the
+/// theorems, this crate holds the compute, and the certificate points at the theorem, not at a
+/// parallel claim of its own.
 pub struct QuantumClaim {
     pub circuit: &'static str,
+    pub sextant: &'static str,
     pub bounds: &'static [Bound],
 }
 
@@ -288,15 +292,19 @@ impl QuantumClaim {
     }
 }
 
-/// Grover's falsifier: the marked |11⟩ is found with probability 1.
+/// Grover's falsifier: the marked |11⟩ is found with probability 1. Backed by SEXTANT's
+/// `clifford-polynomial` claim (Grover's oracle is non-Clifford — that is what makes the search genuinely quantum).
 pub const GROVER_CLAIM: QuantumClaim = QuantumClaim {
     circuit: "grover",
+    sextant: "clifford-polynomial",
     bounds: &[Bound { index: 3, min: 1.0 - 1e-9, max: 1.0 + 1e-9 }],
 };
 
-/// Bell's falsifier: |00⟩ and |11⟩ each 1/2, the cross terms 0.
+/// Bell's falsifier: |00⟩ and |11⟩ each 1/2, the cross terms 0. Backed by SEXTANT's `bell-classical`
+/// claim (the Bell state violates the classical correlation bound).
 pub const BELL_CLAIM: QuantumClaim = QuantumClaim {
     circuit: "bell",
+    sextant: "bell-classical",
     bounds: &[
         Bound { index: 0, min: 0.5 - 1e-9, max: 0.5 + 1e-9 },
         Bound { index: 1, min: 0.0, max: 1e-9 },
@@ -306,9 +314,11 @@ pub const BELL_CLAIM: QuantumClaim = QuantumClaim {
 };
 
 /// A certified quantum run: the checked distribution plus the measured outcome, ready to submit to
-/// the ledger. The seed names the draw, so the run is reproducible.
+/// the ledger. `sextant` names the SEXTANT claim that certifies it. The seed names the draw, so the
+/// run is reproducible.
 pub struct CertifiedRun {
     pub circuit: &'static str,
+    pub sextant: &'static str,
     pub seed: u64,
     pub outcome: usize,
     pub probabilities: Vec<f64>,
@@ -321,7 +331,7 @@ pub fn certify(claim: &QuantumClaim, circuit: &Circuit, seed: u64) -> Result<Cer
     let p = circuit.probabilities();
     claim.check(&p)?;
     let outcome = circuit.measure_all(seed);
-    Ok(CertifiedRun { circuit: claim.circuit, seed, outcome, probabilities: p })
+    Ok(CertifiedRun { circuit: claim.circuit, sextant: claim.sextant, seed, outcome, probabilities: p })
 }
 
 /// The Bell state (|00⟩ + |11⟩)/√2.
