@@ -11,7 +11,7 @@ fn panic(_: &PanicInfo) -> ! {
     }
 }
 
-/// The entry the loader calls. It makes the four syscalls a loadable program is allowed to make, then returns 66.
+/// The entry the loader calls. It makes the five syscalls a loadable program is allowed to make, then returns 66.
 #[unsafe(no_mangle)]
 pub extern "C" fn _start() -> u64 {
     unsafe {
@@ -19,6 +19,8 @@ pub extern "C" fn _start() -> u64 {
         asm!("svc #0", inout("x0") 0u64 => _, options(nostack));
         // apply_certified (1, arg 42)
         asm!("svc #0", inout("x0") 1u64 => _, inout("x1") 42u64 => _, options(nostack));
+        // apply (7, arg 3 = a program-verified quantum result — grover found |11⟩)
+        asm!("svc #0", inout("x0") 7u64 => _, inout("x1") 3u64 => _, options(nostack));
         // yield (2)
         asm!("svc #0", inout("x0") 2u64 => _, options(nostack));
         // send_udp (3)
