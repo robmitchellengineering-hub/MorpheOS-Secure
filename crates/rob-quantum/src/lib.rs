@@ -211,6 +211,23 @@ impl Circuit {
         }
         self.state = next;
     }
+
+    /// Swap two qubits (exchanges their bit positions in the state vector).
+    pub fn swap(&mut self, a: usize, b: usize) {
+        assert!(a < self.n && b < self.n && a != b);
+        let am = 1usize << a;
+        let bm = 1usize << b;
+        for i in 0..self.state.len() {
+            let ba = usize::from(i & am != 0);
+            let bb = usize::from(i & bm != 0);
+            if ba != bb {
+                let j = i ^ am ^ bm;
+                if i < j {
+                    self.state.swap(i, j);
+                }
+            }
+        }
+    }
 }
 
 /// Classical modular exponentiation by squaring: `a^e mod n`.
@@ -347,28 +364,121 @@ pub fn grover() -> Circuit {
 }
 
 /// The n-qubit quantum Fourier transform (the building block for Shor). Qubit 0 is least-significant.
-/// Phase angles are fixed constants (e^{iπ/2^k}), so no `libm` is needed; n ≤ 8 (Shor-15's range).
+/// e^{iπ/2^k} for k = 1..=8 — the QFT controlled-phase angles (fixed, no libm).
+const QFT_PHASE: [C64; 8] = [
+    C64 { re: 0.0, im: 1.0 },                                                // k=1
+    C64 { re: INV_SQRT2, im: INV_SQRT2 },                                    // k=2
+    C64 { re: 0.923_879_532_511_286_7, im: 0.382_683_432_365_089_8 },        // k=3
+    C64 { re: 0.980_785_280_403_230_4, im: 0.195_090_322_016_128_25 },       // k=4
+    C64 { re: 0.995_184_726_672_196_9, im: 0.098_017_140_329_560_6 },        // k=5
+    C64 { re: 0.998_795_456_205_172_4, im: 0.049_067_674_327_418_015 },      // k=6
+    C64 { re: 0.999_698_818_696_204_2, im: 0.024_541_228_522_912_288 },      // k=7
+    C64 { re: 0.999_924_701_839_144_5, im: 0.012_271_538_285_719_925 },      // k=8
+];
+
+/// The n-qubit quantum Fourier transform (the building block for Shor). Qubit 0 is least-significant.
 pub fn qft(n: usize) -> Circuit {
-    // e^{iπ/2^k} for k = 1..=8
-    const PHASE: [C64; 8] = [
-        C64 { re: 0.0, im: 1.0 },                                                // k=1
-        C64 { re: INV_SQRT2, im: INV_SQRT2 },                                    // k=2
-        C64 { re: 0.923_879_532_511_286_7, im: 0.382_683_432_365_089_8 },        // k=3
-        C64 { re: 0.980_785_280_403_230_4, im: 0.195_090_322_016_128_25 },       // k=4
-        C64 { re: 0.995_184_726_672_196_9, im: 0.098_017_140_329_560_6 },        // k=5
-        C64 { re: 0.998_795_456_205_172_4, im: 0.049_067_674_327_418_015 },      // k=6
-        C64 { re: 0.999_698_818_696_204_2, im: 0.024_541_228_522_912_288 },      // k=7
-        C64 { re: 0.999_924_701_839_144_5, im: 0.012_271_538_285_719_925 },      // k=8
-    ];
     let mut c = Circuit::new(n);
-    assert!(n <= PHASE.len() + 1, "QFT beyond the phase table");
+    assert!(n <= QFT_PHASE.len() + 1, "QFT beyond the phase table");
     for q in (0..n).rev() {
         c.apply_gate(&H, q);
         for t in 0..q {
-            c.apply_cphase(q, t, PHASE[q - t - 1]);
+            c.apply_cphase(q, t, QFT_PHASE[q - t - 1]);
         }
     }
+    // the decomposition yields the bit-reversed QFT; reverse the qubits to get F.
+    for q in 0..n / 2 {
+        c.swap(q, n - 1 - q);
+    }
     c
+}
+
+/// Apply the inverse QFT to a specific list of qubits (qubits[0] = least significant).
+fn apply_qft_inverse(c: &mut Circuit, qubits: &[usize]) {
+    // QFT† = F_swapped† · SWAP: reverse the qubits first, then the inverse rotations.
+    let n = qubits.len();
+    for i in 0..n / 2 {
+        c.swap(qubits[i], qubits[n - 1 - i]);
+    }
+    for i in 0..n {
+        let q = qubits[i];
+        for t in 0..i {
+            let p = QFT_PHASE[i - t - 1];
+            c.apply_cphase(q, qubits[t], C64 { re: p.re, im: -p.im });
+        }
+        c.apply_gate(&H, q);
+    }
+}
+
+/// Shor's period-finding for a=2, N=15 (period r=4). Period register = qubits 0-3, work = 4-7.
+/// Returns the circuit before measurement; the period register's probability is peaked at 0, 4, 8, 12.
+pub fn shor_period_finding() -> Circuit {
+    let mut c = Circuit::new(8);
+    c.apply_gate(&X, 4);                       // work register = |1>
+    for q in 0..4 {
+        c.apply_gate(&H, q);                   // period register = uniform superposition
+    }
+    c.apply_modular_exp(&[0, 1, 2, 3], &[4, 5, 6, 7], 2, 15);
+    apply_qft_inverse(&mut c, &[0, 1, 2, 3]);
+    c
+}
+
+/// Greatest common divisor.
+fn gcd(mut a: u64, mut b: u64) -> u64 {
+    while b != 0 {
+        let t = a % b;
+        a = b;
+        b = t;
+    }
+    a
+}
+
+/// The denominator of the continued fraction of `a/b` (the period candidate).
+fn cf_denominator(mut a: u64, mut b: u64) -> u64 {
+    let (mut p0, mut p1) = (0u64, 1u64);
+    let (mut q0, mut q1) = (1u64, 0u64);
+    while b != 0 {
+        let f = a / b;
+        let p2 = f * p1 + p0;
+        let q2 = f * q1 + q0;
+        p0 = p1;
+        p1 = p2;
+        q0 = q1;
+        q1 = q2;
+        let r = a % b;
+        a = b;
+        b = r;
+    }
+    q1
+}
+
+/// Shor's algorithm end-to-end: factor N=15. Period-finding → continued fractions → gcd(2^(r/2)±1, 15).
+pub fn shor_factor() -> Option<(u64, u64)> {
+    let (n, a) = (15u64, 2u64);
+    let p = shor_period_finding().probabilities();
+    let mut period = [0.0f64; 16];
+    for (i, &pi) in p.iter().enumerate() {
+        period[i & 0xF] += pi;
+    }
+    for k in 1..16 {
+        if period[k] < 0.2 {
+            continue;
+        }
+        let r = cf_denominator(k as u64, 16);
+        if r == 0 || r % 2 != 0 {
+            continue;
+        }
+        let x = mod_pow(a, r / 2, n);
+        if x == 1 || x == n - 1 {
+            continue;
+        }
+        let g1 = gcd(x + 1, n);
+        let g2 = gcd(x - 1, n);
+        if g1 > 1 && g1 < n && g2 > 1 && g2 < n {
+            return Some((g1, g2));
+        }
+    }
+    None
 }
 
 /// Teleport |1⟩ from qubit 0 to qubit 2 through a Bell pair, with Alice's measurement and Bob's
@@ -541,5 +651,31 @@ mod tests {
         let p = c.probabilities();
         // new state: control=1 (bit4), work=2 (bit1) → index 16 + 2 = 18
         assert!((p[18] - 1.0).abs() < 1e-12, "expected |x=1,w=2>, got {p:?}");
+    }
+
+    #[test]
+    fn shor_period_is_peaked_at_multiples_of_four() {
+        let c = shor_period_finding();
+        let p = c.probabilities();
+        let mut period = [0.0f64; 16];
+        for (i, &pi) in p.iter().enumerate() {
+            period[i & 0xF] += pi; // low 4 bits = period register
+        }
+        let mut peak = 0.0;
+        for k in [0, 4, 8, 12] {
+            peak += period[k];
+        }
+        assert!((peak - 1.0).abs() < 1e-9, "period not peaked at multiples of 4: {period:?}");
+    }
+
+    #[test]
+    fn shor_factors_fifteen() {
+        match shor_factor() {
+            Some((p, q)) => {
+                assert_eq!(p * q, 15, "factors {p} * {q} != 15");
+                assert!(p > 1 && q > 1, "trivial factors {p}, {q}");
+            }
+            None => panic!("Shor failed to factor 15"),
+        }
     }
 }
