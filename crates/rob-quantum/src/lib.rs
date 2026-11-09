@@ -63,10 +63,13 @@ pub const Y: Gate = gate(C64::ZERO, C64 { re: 0.0, im: -1.0 }, C64::I, C64::ZERO
 pub const Z: Gate = gate(C64::ONE, C64::ZERO, C64::ZERO, C64 { re: -1.0, im: 0.0 });
 /// Phase gate (S).
 pub const S: Gate = gate(C64::ONE, C64::ZERO, C64::ZERO, C64::I);
+/// S-dagger (the inverse phase gate).
+pub const SDG: Gate = gate(C64::ONE, C64::ZERO, C64::ZERO, C64 { re: 0.0, im: -1.0 });
 /// T gate (π/4 phase).
 pub const T: Gate = gate(C64::ONE, C64::ZERO, C64::ZERO, C64 { re: INV_SQRT2, im: INV_SQRT2 });
 
 /// A general n-qubit circuit with a state-vector backend. Qubit 0 is the least-significant bit.
+#[derive(Clone)]
 pub struct Circuit {
     pub n: usize,
     pub state: Vec<C64>,
@@ -481,6 +484,89 @@ pub fn shor_factor() -> Option<(u64, u64)> {
     None
 }
 
+/// One Pauli term of a Hamiltonian: a coefficient and a string of I/X/Y/Z, indexed by qubit
+/// (string[0] is qubit 0). The core of VQE/quantum chemistry.
+#[derive(Clone, Copy)]
+pub struct PauliTerm {
+    pub coeff: f64,
+    pub pauli: &'static str,
+}
+
+/// The H2 molecule's two-qubit Hamiltonian (bond length 0.735 Å, O'Malley et al. 2016).
+/// Ground-state energy ≈ -1.857275. (Z0 = +, Z1 = −.)
+pub const H2: [PauliTerm; 5] = [
+    PauliTerm { coeff: -1.052_373_245_772_859, pauli: "II" },
+    PauliTerm { coeff: 0.397_937_424_843_180_45, pauli: "ZI" },
+    PauliTerm { coeff: -0.397_937_424_843_180_45, pauli: "IZ" },
+    PauliTerm { coeff: -0.011_280_104_256_235_38, pauli: "ZZ" },
+    PauliTerm { coeff: 0.180_931_199_784_231_56, pauli: "XX" },
+];
+
+/// The expectation ⟨ψ|H|ψ⟩ for a Pauli-term Hamiltonian. X/Y terms are rotated to the Z basis
+/// (H, or S†H) before the Z-parity measurement. No allocation per term beyond the basis rotation.
+pub fn expectation(circuit: &Circuit, terms: &[PauliTerm]) -> f64 {
+    let mut e = 0.0;
+    for term in terms {
+        let mut c = circuit.clone();
+        for (q, &ch) in term.pauli.as_bytes().iter().enumerate() {
+            match ch {
+                b'X' => c.apply_gate(&H, q),
+                b'Y' => {
+                    c.apply_gate(&SDG, q);
+                    c.apply_gate(&H, q);
+                }
+                _ => {}
+            }
+        }
+        let mut z = 0.0;
+        for (i, a) in c.state.iter().enumerate() {
+            let mut sign = 1.0;
+            for (q, &ch) in term.pauli.as_bytes().iter().enumerate() {
+                if ch != b'I' && (i >> q) & 1 == 1 {
+                    sign = -sign;
+                }
+            }
+            z += sign * a.norm_sq();
+        }
+        e += term.coeff * z;
+    }
+    e
+}
+
+/// The Ry(θ) rotation gate.
+pub fn ry(theta: f64) -> Gate {
+    let c = libm::cos(theta / 2.0);
+    let s = libm::sin(theta / 2.0);
+    gate(
+        C64 { re: c, im: 0.0 },
+        C64 { re: -s, im: 0.0 },
+        C64 { re: s, im: 0.0 },
+        C64 { re: c, im: 0.0 },
+    )
+}
+
+/// VQE for H2: a two-parameter hardware-efficient ansatz Ry(θ0)⊗Ry(θ1) then CNOT, grid-searched to
+/// the ground state. Returns the minimum energy ⟨ψ(θ)|H|ψ(θ)⟩ over a coarse 2-D grid.
+pub fn vqe_h2() -> f64 {
+    let mut best = f64::INFINITY;
+    let n = 100;
+    for i in 0..=n {
+        for j in 0..=n {
+            let t0 = 2.0 * core::f64::consts::PI * (i as f64) / (n as f64);
+            let t1 = 2.0 * core::f64::consts::PI * (j as f64) / (n as f64);
+            let mut c = Circuit::new(2);
+            c.apply_gate(&ry(t0), 0);
+            c.apply_gate(&ry(t1), 1);
+            c.apply_cnot(0, 1);
+            let e = expectation(&c, &H2);
+            if e < best {
+                best = e;
+            }
+        }
+    }
+    best
+}
+
 /// Teleport |1⟩ from qubit 0 to qubit 2 through a Bell pair, with Alice's measurement and Bob's
 /// conditional corrections. After the protocol, qubit 2 is |1⟩ regardless of Alice's outcomes.
 pub fn teleport(seed: u64) -> Circuit {
@@ -677,5 +763,18 @@ mod tests {
             }
             None => panic!("Shor failed to factor 15"),
         }
+    }
+
+    #[test]
+    fn h2_energy_on_the_vacuum_matches_the_reference() {
+        // ⟨00|H2|00⟩ = -1.0523732 + 0.39793742 - 0.39793742 - 0.0112801 (XX contributes 0)
+        let e = expectation(&Circuit::new(2), &H2);
+        assert!((e - (-1.063_653_350_029_094_4)).abs() < 1e-5, "got {e}");
+    }
+
+    #[test]
+    fn vqe_finds_the_h2_ground_state() {
+        let e = vqe_h2();
+        assert!((e - (-1.857_275_030_202_382)).abs() < 1e-2, "got {e}");
     }
 }

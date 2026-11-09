@@ -6,6 +6,7 @@ description = "The quantum circuit model, no_std — the Rust port of pacland's 
 license = "Apache-2.0"
 
 [dependencies]
+libm = "0.2"
 
 [lints.rust]
 unsafe_code = "forbid"
